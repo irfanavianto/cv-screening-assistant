@@ -250,7 +250,6 @@ export default function Home({ theme, toggleTheme }) {
       setJdLoading(false);
     }
   }
-  }
 
   // ── Criteria editing ──
   function totalWeight() {
