@@ -137,13 +137,18 @@ export default async function handler(req, res) {
   // 1. Collapse 3+ consecutive newlines → 2 (preserve section breaks)
   // 2. Collapse multiple spaces/tabs → single space
   // 3. Trim each line and remove empty lines
+  // 4. Hard cap at 4000 chars — enough for a 2-page CV, prevents truncation
+  const CV_CHAR_LIMIT = 4000;
   const cleanedCvText = cvText
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]+/g, ' ')
     .split('\n')
     .map(line => line.trim())
     .filter(line => line.length > 0)
-    .join('\n');
+    .join('\n')
+    .slice(0, CV_CHAR_LIMIT);
+
+  const cvWasTrimmed = cvText.length > CV_CHAR_LIMIT;
 
   try {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -207,6 +212,7 @@ export default async function handler(req, res) {
       }
     }
 
+    if (cvWasTrimmed) result._cv_trimmed = true;
     return res.status(200).json(result);
   } catch (err) {
     console.error("Handler error:", err);

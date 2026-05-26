@@ -760,10 +760,10 @@ export default function Home({ theme, toggleTheme }) {
               </div>
             </div>
 
-            {/* Truncation warning */}
-            {result._truncated && (
+            {/* CV trimmed warning */}
+            {(result._truncated || result._cv_trimmed) && (
               <div className="warning-banner" style={{ marginBottom: 20 }}>
-                ⚠️ The CV text was very long — analysis may be incomplete. Consider trimming the CV to the most relevant sections and re-analyzing.
+                ⚠️ CV text was trimmed to fit the analysis limit. For best results, paste only the relevant sections (Summary, Skills, Experience, Education) and remove any unrelated content.
               </div>
             )}
 
