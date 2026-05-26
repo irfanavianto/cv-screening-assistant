@@ -204,7 +204,6 @@ export default function Home({ theme, toggleTheme }) {
   const [step, setStep] = useState(1);
 
   // Step 1 — JD
-  const [jdUrl, setJdUrl] = useState('');
   const [jdText, setJdText] = useState('');
   const [parsedJD, setParsedJD] = useState(null);
   const [jdLoading, setJdLoading] = useState(false);
@@ -229,33 +228,28 @@ export default function Home({ theme, toggleTheme }) {
   const [analyzeError, setAnalyzeError] = useState('');
 
   // ── JD parsing ──
-  async function handleParseURL() {
-    if (!jdUrl.trim()) return;
+  async function handleExtractCriteria() {
+    if (!jdText.trim()) return;
     setJdLoading(true);
     setJdError('');
     try {
       const res = await fetch('/api/parse-jd', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: jdUrl }),
+        body: JSON.stringify({ text: jdText }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setParsedJD(data);
-      setJdText(data.job_description_clean || jdUrl);
       setMandatory(data.mandatory || []);
       setNiceToHave(data.nicetohave || []);
       setStep(2);
     } catch (e) {
-      setJdError(e.message || 'Failed to parse URL. Please paste the JD manually.');
+      setJdError(e.message || 'Failed to extract criteria. Please try again.');
     } finally {
       setJdLoading(false);
     }
   }
-
-  function handleManualJD() {
-    if (!jdText.trim()) return;
-    setStep(2);
   }
 
   // ── Criteria editing ──
@@ -372,6 +366,7 @@ export default function Home({ theme, toggleTheme }) {
       <main className="container" style={{ paddingTop: 40, paddingBottom: 80 }}>
         <StepIndicator current={step} />
 
+
         {/* ══ STEP 1 — Job Description ══ */}
         {step === 1 && (
           <div className="card fade-up">
@@ -380,29 +375,19 @@ export default function Home({ theme, toggleTheme }) {
               <div>
                 <h2>Job Description</h2>
                 <p style={{ margin: 0, fontSize: '0.85rem' }}>
-                  Paste a Kalibrr (or any job board) URL to auto-extract criteria, or paste the JD manually.
+                  Copy the full text from any job posting (Kalibrr, LinkedIn, etc.) and paste below.
+                  AI will automatically extract the hiring criteria for you.
                 </p>
               </div>
             </div>
 
-            <label>Job Posting URL</label>
-            <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
-              <input
-                type="url"
-                placeholder="https://www.kalibrr.com/c/company/jobs/..."
-                value={jdUrl}
-                onChange={(e) => setJdUrl(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleParseURL()}
-              />
-              <button
-                className="btn btn-primary"
-                onClick={handleParseURL}
-                disabled={jdLoading || !jdUrl.trim()}
-                style={{ whiteSpace: 'nowrap' }}
-              >
-                {jdLoading ? <><div className="spinner" /> Parsing…</> : '⚡ Auto-parse'}
-              </button>
-            </div>
+            <label>Job Description Text</label>
+            <textarea
+              placeholder={"Paste the full job description here…\n\nTip: On Kalibrr, select all text on the job page (Ctrl+A), copy (Ctrl+C), then paste here."}
+              value={jdText}
+              onChange={(e) => setJdText(e.target.value)}
+              style={{ minHeight: 220, marginBottom: 16 }}
+            />
 
             {jdError && (
               <div className="warning-banner" style={{ marginBottom: 16 }}>
@@ -410,37 +395,18 @@ export default function Home({ theme, toggleTheme }) {
               </div>
             )}
 
-            <div className="divider" style={{ position: 'relative' }}>
-              <span
-                style={{
-                  position: 'absolute', top: -10, left: '50%', transform: 'translateX(-50%)',
-                  background: 'var(--bg-card)', padding: '0 12px',
-                  fontSize: '0.75rem', color: 'var(--text-faint)', fontWeight: 600,
-                }}
-              >
-                OR PASTE MANUALLY
-              </span>
-            </div>
-
-            <label style={{ marginTop: 8 }}>Job Description Text</label>
-            <textarea
-              placeholder="Paste the full job description here…"
-              value={jdText}
-              onChange={(e) => setJdText(e.target.value)}
-              style={{ minHeight: 180, marginBottom: 16 }}
-            />
-
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <button
                 className="btn btn-primary"
-                onClick={handleManualJD}
-                disabled={!jdText.trim()}
+                onClick={handleExtractCriteria}
+                disabled={jdLoading || !jdText.trim()}
               >
-                Continue →
+                {jdLoading ? <><div className="spinner" /> Extracting criteria…</> : '⚡ Extract Criteria'}
               </button>
             </div>
           </div>
         )}
+
 
         {/* ══ STEP 2 — Hiring Criteria ══ */}
         {step === 2 && (
@@ -452,7 +418,7 @@ export default function Home({ theme, toggleTheme }) {
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
-                    <strong style={{ color: 'var(--primary)' }}>✓ Auto-parsed from URL</strong>
+                    <strong style={{ color: 'var(--primary)' }}>✓ Criteria extracted from job description</strong>
                     <p style={{ margin: '2px 0 0', fontSize: '0.82rem' }}>
                       {parsedJD.job_title} · {parsedJD.company}
                     </p>
@@ -899,7 +865,6 @@ export default function Home({ theme, toggleTheme }) {
                 onClick={() => {
                   setStep(1);
                   setResult(null);
-                  setJdUrl('');
                   setJdText('');
                   setParsedJD(null);
                   setMandatory([]);

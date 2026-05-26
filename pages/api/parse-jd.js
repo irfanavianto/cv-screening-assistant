@@ -1,28 +1,43 @@
 // /pages/api/parse-jd.js
 // ─────────────────────────────────────────────────────────────
-// Fetches a job posting URL and uses Claude to extract
-// structured hiring criteria (mandatory + nice-to-have).
-// Runs server-side so there are no CORS issues fetching
-// third-party job sites like Kalibrr.
+// Accepts raw JD text (copy-pasted from any job board).
+// Claude extracts structured hiring criteria from it.
+// URL fetching removed — job boards like Kalibrr block
+// server-side requests. Text paste is more reliable.
 // ─────────────────────────────────────────────────────────────
 
 const PARSE_SYSTEM_PROMPT = `You are a hiring criteria extractor. Given a job description text, extract:
 1. All mandatory/minimum requirements (hard requirements without which a candidate cannot be considered)
 2. All nice-to-have requirements (preferred but not blocking)
 
-For each nice-to-have skill, suggest a default weight (must sum to 100 across all nice-to-have items).
-Categorize each requirement as: technical, education, or experience.
+EDUCATION RULES:
+- Always check ALL sections of the text for education requirements, including
+  "Minimum Qualifications", "Jobs Summary", "Educational Requirement", and any metadata sections
+- Education requirements are ALWAYS mandatory unless explicitly stated as "preferred"
+- Never skip or omit education requirements even if they appear in a summary/metadata section
+
+CATEGORIZATION:
+- type "technical": tools, frameworks, languages, methodologies
+- type "education": degree, certification, academic background  
+- type "experience": years of experience, domain experience, industry background
+
+WEIGHT RULES:
+- Assign weights to nice-to-have items based on how much they are emphasized in the JD
+- All weights must sum to exactly 100
+- If only one nice-to-have exists, assign it 100
 
 HONESTY RULES:
 - Only extract what is explicitly stated in the job description
-- Do not invent requirements
+- Do not invent or infer requirements not present in the text
 - If no nice-to-have requirements are mentioned, return an empty array
 
 Return ONLY valid JSON, no explanation, no markdown fences.`;
 
 function buildParsePrompt(jdText) {
-  return `Extract hiring criteria from this job description:
+  return `Extract hiring criteria from this job description text.
+The text may contain extra metadata from a job board (office address, industry tags, links) — ignore those, focus only on actual job requirements.
 
+JOB DESCRIPTION TEXT:
 ${jdText}
 
 Return this exact JSON structure:
@@ -46,30 +61,15 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { url } = req.body;
-  if (!url) return res.status(400).json({ error: "URL is required." });
+  const { text } = req.body;
+  if (!text || !text.trim()) {
+    return res.status(400).json({ error: "Job description text is required." });
+  }
+
+  // Cap input to avoid excessive token usage
+  const trimmedText = text.trim().slice(0, 8000);
 
   try {
-    // Step 1: Fetch the job posting page
-    const pageRes = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; CVScreener/1.0)" },
-    });
-
-    if (!pageRes.ok) {
-      return res.status(422).json({ error: "Could not fetch the job posting URL. Please paste the job description manually." });
-    }
-
-    // Step 2: Strip HTML tags to get plain text
-    const html = await pageRes.text();
-    const plainText = html
-      .replace(/<script[\s\S]*?<\/script>/gi, "")
-      .replace(/<style[\s\S]*?<\/style>/gi, "")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 6000); // cap to avoid huge token usage
-
-    // Step 3: Ask Claude to extract structured criteria
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -81,7 +81,7 @@ export default async function handler(req, res) {
         model: "claude-haiku-4-5-20251001",
         max_tokens: 1000,
         system: PARSE_SYSTEM_PROMPT,
-        messages: [{ role: "user", content: buildParsePrompt(plainText) }],
+        messages: [{ role: "user", content: buildParsePrompt(trimmedText) }],
       }),
     });
 
@@ -97,6 +97,6 @@ export default async function handler(req, res) {
     return res.status(200).json(result);
   } catch (err) {
     console.error("parse-jd error:", err);
-    return res.status(500).json({ error: "Failed to parse job description. Please paste it manually." });
+    return res.status(500).json({ error: "Failed to extract criteria. Please try again." });
   }
 }
