@@ -2,6 +2,32 @@
 import { useState, useRef } from 'react';
 import Head from 'next/head';
 
+// ─── Lightweight markdown renderer (bold, italic, paragraphs) ───
+function renderMarkdown(text) {
+  if (!text) return null;
+  return text
+    .split(/\n\n+/)
+    .filter(p => p.trim())
+    .map((para, i) => {
+      // Parse inline: **bold** and *italic*
+      const parts = [];
+      const regex = /\*\*(.+?)\*\*|\*(.+?)\*/g;
+      let last = 0, match;
+      while ((match = regex.exec(para)) !== null) {
+        if (match.index > last) parts.push(para.slice(last, match.index));
+        if (match[1]) parts.push(<strong key={match.index}>{match[1]}</strong>);
+        else if (match[2]) parts.push(<em key={match.index}>{match[2]}</em>);
+        last = match.index + match[0].length;
+      }
+      if (last < para.length) parts.push(para.slice(last));
+      return (
+        <p key={i} style={{ margin: i === 0 ? 0 : '12px 0 0', lineHeight: 1.85 }}>
+          {parts}
+        </p>
+      );
+    });
+}
+
 // ─── PDF text extraction (client-side via pdf.js) ──────────────
 async function extractTextFromPDF(file) {
   const pdfjsLib = await import('pdfjs-dist');
@@ -768,14 +794,14 @@ export default function Home({ theme, toggleTheme }) {
             )}
 
             {/* Recruiter Summary */}
-            <div className="card" style={{ marginBottom: 20 }}>
+            <div className="card" style={{ marginBottom: 20, borderLeft: '3px solid var(--primary)' }}>
               <div className="section-header">
                 <div className="section-icon">💡</div>
                 <h2>Recruiter Summary</h2>
               </div>
-              <p style={{ fontSize: '0.92rem', lineHeight: 1.7, color: 'var(--text)', margin: 0 }}>
-                {result.recruiter_summary}
-              </p>
+              <div style={{ fontSize: '0.95rem', color: 'var(--text)' }}>
+                {renderMarkdown(result.recruiter_summary)}
+              </div>
             </div>
 
             {/* Mandatory */}

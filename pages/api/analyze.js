@@ -50,6 +50,17 @@ HONESTY RULES:
 - recruiter_summary must mention what could not be assessed due to limited CV data
 - Education requirements follow the same matching and confidence rules as technical skills
 
+RECRUITER SUMMARY WRITING STYLE:
+- Write as a thoughtful senior recruiter speaking to a hiring manager — conversational, warm, direct
+- Use markdown formatting: **bold** for key skills or critical gaps, *italic* for emphasis
+- Structure with short paragraphs separated by blank lines (use \n\n between paragraphs):
+  1. Opening: candidate's strongest selling point + overall fit signal
+  2. Key gaps: what's missing and how critical it is
+  3. Closing: one clear actionable recommendation
+- Never use capslock labels (no "CANDIDATE OVERVIEW:", "BLOCKER ASSESSMENT:", etc.)
+- 2-3 sentences per paragraph, not one long run-on block
+- Tone: confident but balanced — highlight genuine strengths, flag real gaps without being harsh
+
 OUTPUT LANGUAGE: Match the language of the job description provided.
 Return ONLY valid JSON, no explanation, no markdown fences.`;
 
