@@ -28,6 +28,9 @@ function renderMarkdown(text) {
     });
 }
 
+// ─── Shared constants ────────────────────────────────────────
+const CV_CHAR_LIMIT = 6000;
+
 // ─── PDF text extraction (client-side via pdf.js) ──────────────
 async function extractTextFromPDF(file) {
   const pdfjsLib = await import('pdfjs-dist');
@@ -560,7 +563,7 @@ export default function Home({ theme, toggleTheme }) {
                       updated[i] = { ...updated[i], weight: Number(e.target.value) };
                       setNiceToHave(updated);
                     }}
-                    style={{ width: 64, textAlign: 'center' }}
+                    style={{ width: 84, textAlign: 'center' }}
                   />
                   <button className="btn btn-danger" onClick={() => setNiceToHave(niceToHave.filter((_, j) => j !== i))}>
                     ✕
@@ -592,7 +595,7 @@ export default function Home({ theme, toggleTheme }) {
                   min={1}
                   max={100}
                   onChange={(e) => setNewNice({ ...newNice, weight: Number(e.target.value) })}
-                  style={{ width: 64, textAlign: 'center' }}
+                  style={{ width: 84, textAlign: 'center' }}
                 />
                 <button className="btn btn-secondary" onClick={addNiceToHave}>+ Add</button>
               </div>
@@ -707,29 +710,80 @@ export default function Home({ theme, toggleTheme }) {
               />
             </div>
 
-            <label>CV Text (review &amp; edit if extraction missed anything)</label>
+            {/* CV text label + live char counter */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <label style={{ margin: 0 }}>CV Text — review &amp; edit before analyzing</label>
+              <span style={{
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                fontFamily: 'var(--font-mono)',
+                color: cvText.length > CV_CHAR_LIMIT ? 'var(--fail)' : cvText.length > CV_CHAR_LIMIT * 0.85 ? 'var(--warn)' : 'var(--text-faint)',
+              }}>
+                {cvText.length.toLocaleString()} / {CV_CHAR_LIMIT.toLocaleString()} chars
+              </span>
+            </div>
+
+            {/* Textarea — full content always shown */}
             <textarea
               placeholder="Or paste CV text directly here…"
               value={cvText}
               onChange={(e) => setCvText(e.target.value)}
-              style={{ minHeight: 220, fontFamily: 'var(--font-mono)', fontSize: '0.82rem' }}
+              style={{
+                minHeight: 220,
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.82rem',
+                borderColor: cvText.length > CV_CHAR_LIMIT ? 'var(--fail)' : undefined,
+              }}
             />
 
+            {/* Visual limit marker — only shown when over limit */}
+            {cvText.length > CV_CHAR_LIMIT && (
+              <div style={{
+                marginTop: 8,
+                padding: '10px 14px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'var(--fail-bg)',
+                border: '1px solid var(--fail)',
+                fontSize: '0.82rem',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span style={{ color: 'var(--fail)', fontWeight: 700 }}>⚠️ CV exceeds {CV_CHAR_LIMIT.toLocaleString()} character limit</span>
+                </div>
+                <p style={{ margin: 0, color: 'var(--text-muted)' }}>
+                  Content after character <strong style={{ fontFamily: 'var(--font-mono)' }}>{CV_CHAR_LIMIT.toLocaleString()}</strong> will not be analyzed.
+                  Please trim sections that are less relevant — e.g. early education, unrelated work experience, or duplicate information.
+                  The content you keep should prioritize skills, recent experience, and achievements most relevant to this role.
+                </p>
+                <div style={{ marginTop: 10, padding: '8px 12px', background: 'var(--bg-subtle)', borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  <span style={{ color: 'var(--text-faint)' }}>Content within limit ends at: </span>
+                  <span style={{ color: 'var(--text)' }}>"…{cvText.slice(CV_CHAR_LIMIT - 60, CV_CHAR_LIMIT).trim()}"</span>
+                  <span style={{ color: 'var(--fail)', fontWeight: 700 }}> ← limit</span>
+                </div>
+              </div>
+            )}
+
             {analyzeError && (
-              <div className="warning-banner" style={{ marginTop: 16 }}>
+              <div className="warning-banner" style={{ marginTop: 12 }}>
                 ⚠️ {analyzeError}
               </div>
             )}
 
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 20 }}>
               <button className="btn btn-secondary" onClick={() => setStep(2)}>← Back</button>
-              <button
-                className="btn btn-primary"
-                onClick={handleAnalyze}
-                disabled={analyzing || !cvText.trim()}
-              >
-                {analyzing ? <><div className="spinner" /> Analyzing…</> : '🔍 Analyze CV'}
-              </button>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+                {cvText.length > CV_CHAR_LIMIT && (
+                  <span style={{ fontSize: '0.75rem', color: 'var(--fail)' }}>
+                    Trim {(cvText.length - CV_CHAR_LIMIT).toLocaleString()} characters to enable analysis
+                  </span>
+                )}
+                <button
+                  className="btn btn-primary"
+                  onClick={handleAnalyze}
+                  disabled={analyzing || !cvText.trim() || cvText.length > CV_CHAR_LIMIT}
+                >
+                  {analyzing ? <><div className="spinner" /> Analyzing…</> : '🔍 Analyze CV'}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -908,6 +962,53 @@ export default function Home({ theme, toggleTheme }) {
                     <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text)' }}>{q}</p>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* Token usage — Feature 3 */}
+            {result._usage && (
+              <div style={{
+                padding: '12px 16px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'var(--bg-subtle)',
+                border: '1px solid var(--border)',
+                marginBottom: 20,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: 8,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>⚡</span>
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                    {result._usage.input_tokens.toLocaleString()} in · {result._usage.output_tokens.toLocaleString()} out · {result._usage.total_tokens.toLocaleString()} total tokens
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: 16 }}>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      Actual cost · Haiku
+                    </div>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text)' }}>
+                      ${result._usage.cost_usd.toFixed(4)}
+                      <span style={{ fontSize: '0.7rem', fontWeight: 400, color: 'var(--text-muted)', marginLeft: 4 }}>
+                        (~Rp {Math.round(result._usage.cost_usd * 16500).toLocaleString()})
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      Est. cost · Sonnet
+                    </div>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+                      ${((result._usage.input_tokens / 1_000_000 * 3) + (result._usage.output_tokens / 1_000_000 * 15)).toFixed(4)}
+                      <span style={{ fontSize: '0.7rem', fontWeight: 400, color: 'var(--text-faint)', marginLeft: 4 }}>
+                        (~Rp {Math.round(((result._usage.input_tokens / 1_000_000 * 3) + (result._usage.output_tokens / 1_000_000 * 15)) * 16500).toLocaleString()})
+                      </span>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 

@@ -149,7 +149,7 @@ export default async function handler(req, res) {
   // 2. Collapse multiple spaces/tabs → single space
   // 3. Trim each line and remove empty lines
   // 4. Hard cap at 4000 chars — enough for a 2-page CV, prevents truncation
-  const CV_CHAR_LIMIT = 4000;
+  const CV_CHAR_LIMIT = 6000;
   const cleanedCvText = cvText
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]+/g, ' ')
@@ -224,6 +224,22 @@ export default async function handler(req, res) {
     }
 
     if (cvWasTrimmed) result._cv_trimmed = true;
+
+    // Feature 3: attach token usage + cost estimate to result
+    const usage = data.usage || {};
+    const inputTokens = usage.input_tokens || 0;
+    const outputTokens = usage.output_tokens || 0;
+    // Haiku pricing: $0.80/1M input, $4.00/1M output
+    const inputCost  = (inputTokens  / 1_000_000) * 0.80;
+    const outputCost = (outputTokens / 1_000_000) * 4.00;
+    result._usage = {
+      input_tokens:  inputTokens,
+      output_tokens: outputTokens,
+      total_tokens:  inputTokens + outputTokens,
+      cost_usd:      parseFloat((inputCost + outputCost).toFixed(6)),
+      model:         "claude-haiku-4-5",
+    };
+
     return res.status(200).json(result);
   } catch (err) {
     console.error("Handler error:", err);
