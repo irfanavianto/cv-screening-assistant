@@ -133,6 +133,18 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Missing required fields." });
   }
 
+  // Clean CV text to reduce token usage while preserving structure
+  // 1. Collapse 3+ consecutive newlines → 2 (preserve section breaks)
+  // 2. Collapse multiple spaces/tabs → single space
+  // 3. Trim each line and remove empty lines
+  const cleanedCvText = cvText
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]+/g, ' ')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0)
+    .join('\n');
+
   try {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -143,12 +155,12 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 2000,
+        max_tokens: 8000,
         system: SYSTEM_PROMPT,
         messages: [
           {
             role: "user",
-            content: buildUserPrompt({ jobDescription, mandatory, niceToHave, additionalContext, cvText }),
+            content: buildUserPrompt({ jobDescription, mandatory, niceToHave, additionalContext, cvText: cleanedCvText }),
           },
         ],
       }),
@@ -164,8 +176,36 @@ export default async function handler(req, res) {
     const rawText = data.content?.[0]?.text || "";
 
     // Strip markdown fences just in case
-    const clean = rawText.replace(/```json|```/g, "").trim();
-    const result = JSON.parse(clean);
+    let clean = rawText.replace(/```json|```/g, "").trim();
+
+    // If JSON is truncated (unterminated string), attempt recovery
+    // by finding the last valid closing brace
+    let result;
+    try {
+      result = JSON.parse(clean);
+    } catch (parseErr) {
+      // Try to recover truncated JSON by finding last complete top-level field
+      const lastBrace = clean.lastIndexOf('}');
+      if (lastBrace > 0) {
+        // Close any open arrays and the root object
+        let truncated = clean.slice(0, lastBrace + 1);
+        // Count unclosed brackets
+        const opens = (truncated.match(/\[/g) || []).length;
+        const closes = (truncated.match(/\]/g) || []).length;
+        const unclosed = opens - closes;
+        if (unclosed > 0) truncated += ']'.repeat(unclosed);
+        // Ensure root object is closed
+        if (!truncated.trimEnd().endsWith('}')) truncated += '}';
+        try {
+          result = JSON.parse(truncated);
+          result._truncated = true; // flag so UI can show a warning
+        } catch {
+          throw new Error("AI response was too long and could not be parsed. Please try with a shorter CV.");
+        }
+      } else {
+        throw parseErr;
+      }
+    }
 
     return res.status(200).json(result);
   } catch (err) {

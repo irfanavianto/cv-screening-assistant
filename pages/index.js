@@ -760,6 +760,13 @@ export default function Home({ theme, toggleTheme }) {
               </div>
             </div>
 
+            {/* Truncation warning */}
+            {result._truncated && (
+              <div className="warning-banner" style={{ marginBottom: 20 }}>
+                ⚠️ The CV text was very long — analysis may be incomplete. Consider trimming the CV to the most relevant sections and re-analyzing.
+              </div>
+            )}
+
             {/* Recruiter Summary */}
             <div className="card" style={{ marginBottom: 20 }}>
               <div className="section-header">
