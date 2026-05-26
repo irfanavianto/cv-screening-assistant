@@ -1,0 +1,78 @@
+flowchart TD
+    subgraph BROWSER["🖥️ User Browser (Client-Side)"]
+        A([Start]) --> S1
+
+        subgraph S1["Step 1 · Job Description"]
+            JD_URL["Paste Kalibrr URL"] 
+            JD_MANUAL["Paste JD text manually"]
+        end
+
+        subgraph S2["Step 2 · Hiring Criteria"]
+            CR_REVIEW["Review & edit mandatory list"]
+            CR_WEIGHT["Adjust nice-to-have weights"]
+            CR_CTX["Add optional context (free text)"]
+        end
+
+        subgraph S3["Step 3 · CV Upload"]
+            CV_PDF["Upload PDF"]
+            CV_PDFJS["pdf.js extracts text\n(runs in browser)"]
+            CV_EDIT["Review & edit extracted text"]
+            CV_MANUAL["Paste CV text manually (fallback)"]
+        end
+
+        subgraph S4["Step 4 · Results"]
+            R_SUMMARY["Recruiter Summary (narrative)"]
+            R_MANDATORY["Mandatory Pass/Fail checklist"]
+            R_NICE["Nice-to-Have score breakdown"]
+            R_QUAL["Qualitative Signals"]
+            R_GAP["Gap Analysis"]
+            R_IQ["Suggested Interview Questions"]
+        end
+
+        S1 --> S2 --> S3
+        CV_PDF --> CV_PDFJS --> CV_EDIT
+        CV_MANUAL --> CV_EDIT
+        S3 --> ANALYZE_BTN["🔍 Analyze CV"]
+        S4 --> AGAIN["Screen another CV"]
+    end
+
+    subgraph VERCEL["⚡ Vercel Serverless (Server-Side)"]
+        subgraph PARSE["POST /api/parse-jd"]
+            P1["Fetch job posting URL"] --> P2["Strip HTML → plain text"]
+            P2 --> P3["Claude extracts criteria + weights"]
+        end
+
+        subgraph ANALYZE["POST /api/analyze"]
+            A1["Rate limit check\n(5 req/min per IP)"] 
+            A2["Build prompt:\nJD + criteria + CV text"]
+            A3["Claude Haiku analysis\n3-layer framework"]
+            A4["Parse JSON response"]
+            A1 --> A2 --> A3 --> A4
+        end
+
+        ENV[("🔑 ANTHROPIC_API_KEY\nstored here only")]
+    end
+
+    subgraph CLAUDE["🤖 Claude API (Anthropic)"]
+        subgraph FRAMEWORK["3-Layer Analysis Framework"]
+            L1["Layer 1: Evidence Extraction\nskills · years · domain · education"]
+            L2["Layer 2: Signal Interpretation\nownership · complexity · growth · context fit"]
+            L3["Layer 3: Gap Analysis\nBLOCKER / RAMP-UP / MINOR"]
+            L1 --> L2 --> L3
+        end
+        JSON_OUT["Returns structured JSON"]
+    end
+
+    JD_URL -->|"URL"| PARSE
+    PARSE -->|"pre-filled criteria"| S2
+    ANALYZE_BTN -->|"JD + criteria + CV"| ANALYZE
+    ANALYZE <-->|"API call"| FRAMEWORK
+    FRAMEWORK --> JSON_OUT
+    JSON_OUT -->|"parsed result"| S4
+    ENV -.->|"injected at runtime"| ANALYZE
+    ENV -.->|"injected at runtime"| PARSE
+
+    style BROWSER fill:#EBF0FF,stroke:#0047CC,color:#0D1B2A
+    style VERCEL fill:#FFF0E8,stroke:#FF6B2B,color:#0D1B2A
+    style CLAUDE fill:#F0FDF4,stroke:#16A34A,color:#0D1B2A
+    style FRAMEWORK fill:#FFFFFF,stroke:#16A34A,color:#0D1B2A
