@@ -5,7 +5,7 @@ import Head from 'next/head';
 // ─── PDF text extraction (client-side via pdf.js) ──────────────
 async function extractTextFromPDF(file) {
   const pdfjsLib = await import('pdfjs-dist');
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js`;
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -220,6 +220,7 @@ export default function Home({ theme, toggleTheme }) {
   const [cvText, setCvText] = useState('');
   const [cvLoading, setCvLoading] = useState(false);
   const [cvFileName, setCvFileName] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
   const fileRef = useRef();
 
   // Step 4 — Results
@@ -616,17 +617,34 @@ export default function Home({ theme, toggleTheme }) {
               </div>
             </div>
 
-            {/* Drop zone */}
+            {/* Drop zone — supports click and drag & drop */}
             <div
               onClick={() => fileRef.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+              onDragEnter={(e) => { e.preventDefault(); setIsDragging(true); }}
+              onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDragging(false);
+                const file = e.dataTransfer.files?.[0];
+                if (file && file.type === 'application/pdf') {
+                  handleFileUpload({ target: { files: [file] } });
+                } else if (file) {
+                  alert('Please drop a PDF file.');
+                }
+              }}
               style={{
-                border: '2px dashed var(--border)',
+                border: isDragging
+                  ? '2px dashed var(--primary)'
+                  : cvFileName ? '2px dashed var(--pass)' : '2px dashed var(--border)',
                 borderRadius: 'var(--radius)',
                 padding: '32px 24px',
                 textAlign: 'center',
                 cursor: 'pointer',
                 marginBottom: 20,
-                background: cvFileName ? 'var(--pass-bg)' : 'var(--bg-subtle)',
+                background: isDragging
+                  ? 'var(--primary-light)'
+                  : cvFileName ? 'var(--pass-bg)' : 'var(--bg-subtle)',
                 transition: 'all 0.15s',
               }}
             >
@@ -635,17 +653,23 @@ export default function Home({ theme, toggleTheme }) {
                   <div className="spinner" />
                   <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Extracting text from PDF…</span>
                 </div>
+              ) : isDragging ? (
+                <div>
+                  <div style={{ fontSize: '1.8rem', marginBottom: 8 }}>📂</div>
+                  <strong style={{ fontSize: '0.9rem', color: 'var(--primary)' }}>Drop PDF here</strong>
+                </div>
               ) : cvFileName ? (
                 <div>
                   <div style={{ fontSize: '1.5rem', marginBottom: 6 }}>✅</div>
                   <strong style={{ fontSize: '0.9rem', color: 'var(--pass)' }}>{cvFileName}</strong>
                   <p style={{ fontSize: '0.8rem', marginTop: 4 }}>Text extracted. Review and edit below if needed.</p>
+                  <p style={{ fontSize: '0.75rem', marginTop: 4, color: 'var(--text-faint)' }}>Click or drop a new file to replace</p>
                 </div>
               ) : (
                 <div>
                   <div style={{ fontSize: '1.8rem', marginBottom: 8 }}>📎</div>
-                  <strong style={{ fontSize: '0.9rem' }}>Click to upload PDF</strong>
-                  <p style={{ fontSize: '0.8rem', marginTop: 4 }}>ATS-friendly CVs work best</p>
+                  <strong style={{ fontSize: '0.9rem' }}>Drag & drop PDF here</strong>
+                  <p style={{ fontSize: '0.8rem', marginTop: 4, color: 'var(--text-muted)' }}>or click to browse · ATS-friendly CVs work best</p>
                 </div>
               )}
               <input
