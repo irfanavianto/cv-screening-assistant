@@ -248,6 +248,7 @@ export default function Home({ theme, toggleTheme }) {
   // Step 3 — CV
   const [cvText, setCvText] = useState('');
   const [cvLoading, setCvLoading] = useState(false);
+  const [cvReformatting, setCvReformatting] = useState(false);
   const [cvFileName, setCvFileName] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const fileRef = useRef();
@@ -305,13 +306,26 @@ export default function Home({ theme, toggleTheme }) {
     setCvFileName(file.name);
     setCvLoading(true);
     try {
-      const text = await extractTextFromPDF(file);
-      setCvText(text);
+      // Step 1: Extract raw text from PDF (client-side)
+      const rawText = await extractTextFromPDF(file);
+      setCvText(rawText); // show raw text immediately as fallback
+      setCvLoading(false);
+
+      // Step 2: Reformat to markdown via Claude (server-side)
+      setCvReformatting(true);
+      const res = await fetch('/api/reformat-cv', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: rawText }),
+      });
+      const data = await res.json();
+      if (data.formatted) setCvText(data.formatted);
     } catch {
       setCvText('');
       alert('Could not extract text from PDF. Please paste the CV manually below.');
     } finally {
       setCvLoading(false);
+      setCvReformatting(false);
     }
   }
 
@@ -682,6 +696,12 @@ export default function Home({ theme, toggleTheme }) {
                   <div className="spinner" />
                   <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Extracting text from PDF…</span>
                 </div>
+              ) : cvReformatting ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                  <div className="spinner" />
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Formatting CV with AI…</span>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>Raw text shown below — formatted version coming shortly</span>
+                </div>
               ) : isDragging ? (
                 <div>
                   <div style={{ fontSize: '1.8rem', marginBottom: 8 }}>📂</div>
@@ -691,7 +711,7 @@ export default function Home({ theme, toggleTheme }) {
                 <div>
                   <div style={{ fontSize: '1.5rem', marginBottom: 6 }}>✅</div>
                   <strong style={{ fontSize: '0.9rem', color: 'var(--pass)' }}>{cvFileName}</strong>
-                  <p style={{ fontSize: '0.8rem', marginTop: 4 }}>Text extracted. Review and edit below if needed.</p>
+                  <p style={{ fontSize: '0.8rem', marginTop: 4 }}>Formatted as markdown. Review and edit below if needed.</p>
                   <p style={{ fontSize: '0.75rem', marginTop: 4, color: 'var(--text-faint)' }}>Click or drop a new file to replace</p>
                 </div>
               ) : (
@@ -771,7 +791,12 @@ export default function Home({ theme, toggleTheme }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 20 }}>
               <button className="btn btn-secondary" onClick={() => setStep(2)}>← Back</button>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
-                {cvText.length > CV_CHAR_LIMIT && (
+                {cvReformatting && (
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    Formatting CV… please wait
+                  </span>
+                )}
+                {!cvReformatting && cvText.length > CV_CHAR_LIMIT && (
                   <span style={{ fontSize: '0.75rem', color: 'var(--fail)' }}>
                     Trim {(cvText.length - CV_CHAR_LIMIT).toLocaleString()} characters to enable analysis
                   </span>
@@ -779,7 +804,7 @@ export default function Home({ theme, toggleTheme }) {
                 <button
                   className="btn btn-primary"
                   onClick={handleAnalyze}
-                  disabled={analyzing || !cvText.trim() || cvText.length > CV_CHAR_LIMIT}
+                  disabled={analyzing || cvReformatting || !cvText.trim() || cvText.length > CV_CHAR_LIMIT}
                 >
                   {analyzing ? <><div className="spinner" /> Analyzing…</> : '🔍 Analyze CV'}
                 </button>
