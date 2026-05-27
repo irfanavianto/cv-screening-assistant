@@ -31,6 +31,101 @@ function renderMarkdown(text) {
 // ─── Shared constants ────────────────────────────────────────
 const CV_CHAR_LIMIT = 6000;
 
+// ─── Screening Status logic (rule-based, not AI) ────────────────
+function getScreeningStatus(mandatorySummary, niceToHaveTotal) {
+  const { passed, total } = mandatorySummary || { passed: 0, total: 0 };
+  const failed = total - passed;
+  if (failed >= 2) return 'Not Qualified';
+  if (failed === 1 && niceToHaveTotal >= 60) return 'Review Gap';
+  if (failed === 1) return 'Not Qualified';
+  if (niceToHaveTotal >= 70) return 'Shortlist';
+  if (niceToHaveTotal >= 40) return 'Consider';
+  return 'Review Gap';
+}
+
+// ─── PDF export via browser print ────────────────────────────────
+function exportToPDF(result, jobTitle) {
+  window.print();
+}
+
+// ─── Excel export via SheetJS ────────────────────────────────────
+async function exportToExcel(records) {
+  // Lazy-load SheetJS from CDN
+  if (!window.XLSX) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+  const XLSX = window.XLSX;
+
+  const rows = records.map(r => ({
+    'Date':              r.date,
+    'Candidate Name':    r.candidateName,
+    'Role':              r.role,
+    'Mandatory Passed':  r.mandatoryPassed,
+    'Mandatory Total':   r.mandatoryTotal,
+    'NtH Score':         r.nthScore,
+    'Top Gap':           r.topGap,
+    'Screening Status':  r.screeningStatus,
+    'HR Notes':          '',
+  }));
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+
+  // Column widths
+  ws['!cols'] = [
+    { wch: 12 }, { wch: 25 }, { wch: 30 }, { wch: 16 }, { wch: 14 },
+    { wch: 10 }, { wch: 35 }, { wch: 16 }, { wch: 30 },
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'CV Screening Results');
+  XLSX.writeFile(wb, `CV-Screening-Results_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+// ─── localStorage helpers ─────────────────────────────────────────
+const LS_KEY = 'astro_cv_screening_records';
+
+function saveRecord(result, jobTitle) {
+  const status = getScreeningStatus(result.mandatory_summary, result.nicetohave_total);
+  const topGap = result.gap_analysis?.find(g => g.severity === 'BLOCKER')?.skill
+    || result.gap_analysis?.find(g => g.severity === 'RAMP-UP')?.skill
+    || result.gap_analysis?.[0]?.skill
+    || '—';
+
+  const record = {
+    date:             new Date().toISOString().slice(0, 10),
+    candidateName:    result.candidate_name || 'Unknown',
+    role:             jobTitle || 'Unknown Role',
+    mandatoryPassed:  result.mandatory_summary?.passed ?? 0,
+    mandatoryTotal:   result.mandatory_summary?.total ?? 0,
+    nthScore:         result.nicetohave_total ?? 0,
+    topGap,
+    screeningStatus:  status,
+  };
+
+  try {
+    const existing = JSON.parse(localStorage.getItem(LS_KEY) || '[]');
+    existing.push(record);
+    localStorage.setItem(LS_KEY, JSON.stringify(existing));
+  } catch {
+    // localStorage unavailable — silent fail
+  }
+  return record;
+}
+
+function loadRecords() {
+  try {
+    return JSON.parse(localStorage.getItem(LS_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
 // ─── PDF text extraction (client-side via pdf.js) ──────────────
 async function extractTextFromPDF(file) {
   const pdfjsLib = await import('pdfjs-dist');
@@ -260,6 +355,8 @@ export default function Home({ theme, toggleTheme }) {
   const [result, setResult] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState('');
+  const [screeningRecords, setScreeningRecords] = useState(() => loadRecords());
+  const [currentRecord, setCurrentRecord] = useState(null);
 
   // ── JD parsing ──
   async function handleExtractCriteria() {
@@ -353,6 +450,10 @@ export default function Home({ theme, toggleTheme }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setResult(data);
+      const jdTitle = parsedJD?.job_title || 'Unknown Role';
+      const rec = saveRecord(data, jdTitle);
+      setCurrentRecord(rec);
+      setScreeningRecords(loadRecords());
       setStep(4);
     } catch (e) {
       setAnalyzeError(e.message || 'Analysis failed. Please try again.');
@@ -1129,27 +1230,99 @@ export default function Home({ theme, toggleTheme }) {
               </div>
             )}
 
-            {/* Actions */}
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <button className="btn btn-secondary" onClick={() => { setStep(3); setResult(null); }}>
-                ← Screen Another CV
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={() => {
-                  setStep(1);
-                  setResult(null);
-                  setJdText('');
-                  setParsedJD(null);
-                  setMandatory([]);
-                  setNiceToHave([]);
-                  setAdditionalContext('');
-                  setCvText('');
-                  setCvFileName('');
-                }}
-              >
-                🔄 Start Over
-              </button>
+            {/* Screening Status badge */}
+            {currentRecord && (
+              <div style={{
+                padding: '14px 18px',
+                borderRadius: 'var(--radius-sm)',
+                marginBottom: 20,
+                background: {
+                  'Shortlist': 'var(--pass-bg)',
+                  'Consider': 'var(--warn-bg)',
+                  'Review Gap': 'var(--accent-light)',
+                  'Not Qualified': 'var(--fail-bg)',
+                }[currentRecord.screeningStatus] || 'var(--bg-subtle)',
+                border: `1px solid ${{
+                  'Shortlist': 'var(--pass)',
+                  'Consider': 'var(--warn)',
+                  'Review Gap': 'var(--accent)',
+                  'Not Qualified': 'var(--fail)',
+                }[currentRecord.screeningStatus] || 'var(--border)'}`,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}>
+                <div>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: 3 }}>
+                    Screening Status
+                  </div>
+                  <div style={{ fontWeight: 800, fontSize: '1.1rem' }}>
+                    {{
+                      'Shortlist': '🟢',
+                      'Consider': '🟡',
+                      'Review Gap': '🟠',
+                      'Not Qualified': '🔴',
+                    }[currentRecord.screeningStatus]} {currentRecord.screeningStatus}
+                  </div>
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'right', maxWidth: 260 }}>
+                  {{
+                    'Shortlist': 'All mandatory requirements met. Strong nice-to-have score. Recommended for next stage.',
+                    'Consider': 'All mandatory requirements met. Some nice-to-have gaps — worth evaluating further.',
+                    'Review Gap': 'Minor mandatory gap or borderline score. Review specific gaps before proceeding.',
+                    'Not Qualified': 'Does not meet mandatory requirements for this role.',
+                  }[currentRecord.screeningStatus]}
+                </div>
+              </div>
+            )}
+
+            {/* Export + Navigation actions */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-secondary" onClick={() => { setStep(3); setResult(null); }}>
+                  ← Screen Another CV
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setStep(1);
+                    setResult(null);
+                    setJdText('');
+                    setParsedJD(null);
+                    setMandatory([]);
+                    setNiceToHave([]);
+                    setAdditionalContext('');
+                    setCvText('');
+                    setCvFileName('');
+                    setCurrentRecord(null);
+                  }}
+                >
+                  🔄 Start Over
+                </button>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    // Set document title for PDF filename
+                    const date = new Date().toISOString().slice(0,10);
+                    const name = (result.candidate_name || 'Candidate').replace(/\s+/g, '-');
+                    document.title = `${date}_${name}_CV-Analysis`;
+                    window.print();
+                    setTimeout(() => { document.title = 'CV Screening Assistant · Astro'; }, 1000);
+                  }}
+                >
+                  📄 Export PDF
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => exportToExcel(screeningRecords)}
+                  disabled={screeningRecords.length === 0}
+                  title={screeningRecords.length === 0 ? 'No records yet' : `Export ${screeningRecords.length} candidate(s)`}
+                >
+                  📊 Export Excel ({screeningRecords.length})
+                </button>
+              </div>
             </div>
           </div>
         )}
