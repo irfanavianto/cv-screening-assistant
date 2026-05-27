@@ -31,16 +31,35 @@ function renderMarkdown(text) {
 // ─── Shared constants ────────────────────────────────────────
 const CV_CHAR_LIMIT = 6000;
 
-// ─── Screening Status logic (rule-based, not AI) ────────────────
-function getScreeningStatus(mandatorySummary, niceToHaveTotal) {
+// ─── Screening Status logic (composite scoring) ─────────────────
+// Iteration 3: BLOCKER gaps cap the status, RAMP-UP/MINOR are
+// informational only. Status determined by mandatory pass rate
+// + NtH score, with BLOCKER penalty applied on top.
+//
+// compositeScore = mandatoryBase (0-60) + nthContribution (0-40)
+//                - blockerPenalty (50 per BLOCKER)
+//
+// Shortlist  : score >= 70  (strong fit, proceed to interview)
+// Consider   : score >= 45  (worth evaluating, minor concerns)
+// Review Gap : score >= 20  (has BLOCKER or weak across both)
+// Not Qualified: score < 20 (significant blockers or very weak)
+function getScreeningStatus(mandatorySummary, niceToHaveTotal, gapAnalysis) {
   const { passed, total } = mandatorySummary || { passed: 0, total: 0 };
-  const failed = total - passed;
-  if (failed >= 2) return 'Not Qualified';
-  if (failed === 1 && niceToHaveTotal >= 60) return 'Review Gap';
-  if (failed === 1) return 'Not Qualified';
-  if (niceToHaveTotal >= 70) return 'Shortlist';
-  if (niceToHaveTotal >= 40) return 'Consider';
-  return 'Review Gap';
+  const gaps = gapAnalysis || [];
+
+  // Count BLOCKER gaps — these are the only ones that penalize score
+  const blockerCount = gaps.filter(g => g.severity === 'BLOCKER').length;
+
+  // Composite score components
+  const mandatoryBase    = total > 0 ? (passed / total) * 60 : 0;
+  const nthContribution  = (niceToHaveTotal || 0) * 0.4;
+  const blockerPenalty   = blockerCount * 50;
+  const compositeScore   = mandatoryBase + nthContribution - blockerPenalty;
+
+  if (compositeScore >= 70) return 'Shortlist';
+  if (compositeScore >= 45) return 'Consider';
+  if (compositeScore >= 20) return 'Review Gap';
+  return 'Not Qualified';
 }
 
 // ─── PDF export via browser print ────────────────────────────────
@@ -91,7 +110,7 @@ async function exportToExcel(records) {
 const LS_KEY = 'astro_cv_screening_records';
 
 function saveRecord(result, jobTitle) {
-  const status = getScreeningStatus(result.mandatory_summary, result.nicetohave_total);
+  const status = getScreeningStatus(result.mandatory_summary, result.nicetohave_total, result.gap_analysis);
   const topGap = result.gap_analysis?.find(g => g.severity === 'BLOCKER')?.skill
     || result.gap_analysis?.find(g => g.severity === 'RAMP-UP')?.skill
     || result.gap_analysis?.[0]?.skill
@@ -1267,10 +1286,10 @@ export default function Home({ theme, toggleTheme }) {
                 </div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'right', maxWidth: 260 }}>
                   {{
-                    'Shortlist': 'All mandatory requirements met. Strong nice-to-have score. Recommended for next stage.',
-                    'Consider': 'All mandatory requirements met. Some nice-to-have gaps — worth evaluating further.',
-                    'Review Gap': 'Minor mandatory gap or borderline score. Review specific gaps before proceeding.',
-                    'Not Qualified': 'Does not meet mandatory requirements for this role.',
+                    'Shortlist':     'Strong mandatory pass rate and high nice-to-have score. No critical blockers. Recommended for next stage.',
+                    'Consider':      'Meets most requirements with manageable gaps. Worth evaluating further — check gap analysis for details.',
+                    'Review Gap':    'Has at least one critical blocker or weak performance across both mandatory and nice-to-have. Review before proceeding.',
+                    'Not Qualified': 'Multiple critical blockers or insufficient mandatory coverage for this role.',
                   }[currentRecord.screeningStatus]}
                 </div>
               </div>
