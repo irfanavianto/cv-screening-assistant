@@ -108,20 +108,22 @@ function MandatoryCard({ item }) {
     >
       <div style={{ fontSize: '1.1rem', marginTop: 1 }}>{item.pass ? '✅' : '❌'}</div>
       <div style={{ flex: 1 }}>
-        <div className="flex items-center gap-2" style={{ marginBottom: 4 }}>
-          <strong style={{ fontSize: '0.9rem' }}>{item.skill}</strong>
-          <span
-            style={{
-              fontSize: '0.7rem',
-              padding: '1px 7px',
-              borderRadius: 99,
-              background: 'var(--bg-subtle)',
-              color: 'var(--text-muted)',
-            }}
-          >
-            {item.type}
-          </span>
-          <ConfidenceBadge level={item.confidence} />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+          <strong style={{ fontSize: '0.9rem', flex: 1, marginRight: 12 }}>{item.skill}</strong>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            <span
+              style={{
+                fontSize: '0.7rem',
+                padding: '1px 7px',
+                borderRadius: 99,
+                background: 'var(--bg-subtle)',
+                color: 'var(--text-muted)',
+              }}
+            >
+              {item.type}
+            </span>
+            <ConfidenceBadge level={item.confidence} />
+          </div>
         </div>
         <p style={{ fontSize: '0.82rem', margin: 0 }}>{item.evidence}</p>
       </div>
@@ -249,6 +251,7 @@ export default function Home({ theme, toggleTheme }) {
   const [cvText, setCvText] = useState('');
   const [cvLoading, setCvLoading] = useState(false);
   const [cvReformatting, setCvReformatting] = useState(false);
+  const [cvPreviewMode, setCvPreviewMode] = useState(false);
   const [cvFileName, setCvFileName] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const fileRef = useRef();
@@ -730,31 +733,120 @@ export default function Home({ theme, toggleTheme }) {
               />
             </div>
 
-            {/* CV text label + live char counter */}
+            {/* CV text label + char counter + Edit/Preview toggle */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
               <label style={{ margin: 0 }}>CV Text — review &amp; edit before analyzing</label>
-              <span style={{
-                fontSize: '0.78rem',
-                fontWeight: 600,
-                fontFamily: 'var(--font-mono)',
-                color: cvText.length > CV_CHAR_LIMIT ? 'var(--fail)' : cvText.length > CV_CHAR_LIMIT * 0.85 ? 'var(--warn)' : 'var(--text-faint)',
-              }}>
-                {cvText.length.toLocaleString()} / {CV_CHAR_LIMIT.toLocaleString()} chars
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  fontFamily: 'var(--font-mono)',
+                  color: cvText.length > CV_CHAR_LIMIT ? 'var(--fail)' : cvText.length > CV_CHAR_LIMIT * 0.85 ? 'var(--warn)' : 'var(--text-faint)',
+                }}>
+                  {cvText.length.toLocaleString()} / {CV_CHAR_LIMIT.toLocaleString()} chars
+                </span>
+                {cvText.trim() && (
+                  <div style={{ display: 'flex', borderRadius: 6, border: '1px solid var(--border)', overflow: 'hidden' }}>
+                    <button
+                      onClick={() => setCvPreviewMode(false)}
+                      style={{
+                        padding: '3px 10px',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        border: 'none',
+                        cursor: 'pointer',
+                        background: !cvPreviewMode ? 'var(--primary)' : 'var(--bg-subtle)',
+                        color: !cvPreviewMode ? '#fff' : 'var(--text-muted)',
+                        transition: 'all 0.15s',
+                      }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => setCvPreviewMode(true)}
+                      style={{
+                        padding: '3px 10px',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        border: 'none',
+                        cursor: 'pointer',
+                        background: cvPreviewMode ? 'var(--primary)' : 'var(--bg-subtle)',
+                        color: cvPreviewMode ? '#fff' : 'var(--text-muted)',
+                        transition: 'all 0.15s',
+                      }}
+                    >
+                      Preview
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Textarea — full content always shown */}
-            <textarea
-              placeholder="Or paste CV text directly here…"
-              value={cvText}
-              onChange={(e) => setCvText(e.target.value)}
-              style={{
+            {/* Edit mode — textarea */}
+            {!cvPreviewMode && (
+              <textarea
+                placeholder="Or paste CV text directly here…"
+                value={cvText}
+                onChange={(e) => setCvText(e.target.value)}
+                style={{
+                  minHeight: 220,
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.82rem',
+                  borderColor: cvText.length > CV_CHAR_LIMIT ? 'var(--fail)' : undefined,
+                }}
+              />
+            )}
+
+            {/* Preview mode — rendered markdown */}
+            {cvPreviewMode && cvText.trim() && (
+              <div style={{
                 minHeight: 220,
-                fontFamily: 'var(--font-mono)',
-                fontSize: '0.82rem',
-                borderColor: cvText.length > CV_CHAR_LIMIT ? 'var(--fail)' : undefined,
-              }}
-            />
+                padding: '12px 14px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'var(--bg-subtle)',
+                border: '1.5px solid var(--border)',
+                fontSize: '0.88rem',
+                lineHeight: 1.7,
+                overflowY: 'auto',
+                maxHeight: 420,
+              }}>
+                {cvText.split('\n').map((line, i) => {
+                  if (/^## (.+)/.test(line)) {
+                    return <h3 key={i} style={{ fontSize: '0.95rem', fontWeight: 700, margin: '14px 0 4px', color: 'var(--primary)' }}>{line.replace(/^## /, '')}</h3>;
+                  }
+                  if (/^### (.+)/.test(line)) {
+                    return <h4 key={i} style={{ fontSize: '0.88rem', fontWeight: 700, margin: '10px 0 2px' }}>{line.replace(/^### /, '')}</h4>;
+                  }
+                  if (/^- (.+)/.test(line)) {
+                    const text = line.replace(/^- /, '');
+                    const parts = [];
+                    const regex = /\*\*(.+?)\*\*|\*(.+?)\*/g;
+                    let last = 0, match;
+                    while ((match = regex.exec(text)) !== null) {
+                      if (match.index > last) parts.push(text.slice(last, match.index));
+                      if (match[1]) parts.push(<strong key={match.index}>{match[1]}</strong>);
+                      else if (match[2]) parts.push(<em key={match.index}>{match[2]}</em>);
+                      last = match.index + match[0].length;
+                    }
+                    if (last < text.length) parts.push(text.slice(last));
+                    return <div key={i} style={{ display: 'flex', gap: 8, margin: '2px 0' }}><span style={{ color: 'var(--primary)', flexShrink: 0 }}>•</span><span>{parts}</span></div>;
+                  }
+                  if (line.trim() === '') return <div key={i} style={{ height: 6 }} />;
+                  // Inline bold/italic for regular lines
+                  const parts = [];
+                  const regex = /\*\*(.+?)\*\*|\*(.+?)\*/g;
+                  let last = 0, match;
+                  while ((match = regex.exec(line)) !== null) {
+                    if (match.index > last) parts.push(line.slice(last, match.index));
+                    if (match[1]) parts.push(<strong key={match.index}>{match[1]}</strong>);
+                    else if (match[2]) parts.push(<em key={match.index}>{match[2]}</em>);
+                    last = match.index + match[0].length;
+                  }
+                  if (last < line.length) parts.push(line.slice(last));
+                  return <p key={i} style={{ margin: '2px 0' }}>{parts}</p>;
+                })}
+              </div>
+            )}
 
             {/* Visual limit marker — only shown when over limit */}
             {cvText.length > CV_CHAR_LIMIT && (
@@ -878,7 +970,7 @@ export default function Home({ theme, toggleTheme }) {
                 <div className="section-icon">💡</div>
                 <h2>Recruiter Summary</h2>
               </div>
-              <div style={{ fontSize: '0.95rem', color: 'var(--text)' }}>
+              <div style={{ fontSize: '0.95rem', color: 'var(--text)', textAlign: 'justify' }}>
                 {renderMarkdown(result.recruiter_summary)}
               </div>
             </div>
