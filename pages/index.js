@@ -123,169 +123,189 @@ async function exportToExcel(records) {
 function generatePDF(result, parsedJD, niceToHaveItems, screeningStatus, compositeScore) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const W = 210, H = 297;
-  const ml = 20, mr = 20, mt = 25;
+  const ml = 18, mr = 18, mt = 22;
   const cw = W - ml - mr;
   let y = mt;
 
-  const colors = {
-    primary:  [0, 71, 204],
+  // Navy blue matching Hackathon logo visual
+  const C = {
+    primary:  [26, 35, 126],   // #1A237E — deep navy
     pass:     [22, 163, 74],
     fail:     [220, 38, 38],
     warn:     [217, 119, 6],
     text:     [13, 27, 42],
     muted:    [90, 104, 128],
-    border:   [200, 210, 230],
-    bgSubtle: [245, 247, 250],
+    faint:    [160, 174, 192],
+    border:   [210, 218, 232],
+    subtle:   [246, 248, 252],
     accent:   [255, 107, 43],
     white:    [255, 255, 255],
+    headerBg: [26, 35, 126],
   };
 
-  // ── Helpers ──────────────────────────────────────────────────────
-  function setC(rgb, type = 'text') {
+  const LH = 0.40; // line height multiplier — readable but compact
+
+  // ── Core helpers ──────────────────────────────────────────────────
+  function sc(rgb, type = 'text') {
     if (type === 'text') doc.setTextColor(...rgb);
     else if (type === 'fill') doc.setFillColor(...rgb);
     else if (type === 'draw') doc.setDrawColor(...rgb);
   }
 
-  function checkPage(needed = 12) {
-    if (y + needed > H - 18) { doc.addPage(); y = mt; }
+  function checkPage(needed = 14) {
+    if (y + needed > H - 16) { doc.addPage(); y = mt; }
   }
 
-  function rect(x, ry, w, h, fill, draw, r = 2) {
-    if (fill) { setC(fill, 'fill'); }
-    if (draw) { setC(draw, 'draw'); doc.setLineWidth(0.25); }
-    const s = fill && draw ? 'FD' : fill ? 'F' : 'D';
-    doc.roundedRect(x, ry, w, h, r, r, s);
+  function rr(x, ry, w, h, fill, draw, r = 2) {
+    if (fill) sc(fill, 'fill');
+    if (draw) { sc(draw, 'draw'); doc.setLineWidth(0.25); }
+    doc.roundedRect(x, ry, w, h, r, r, fill && draw ? 'FD' : fill ? 'F' : 'D');
   }
 
-  // Justified text — distributes words evenly across line width
-  function justifiedText(text, x, ty, maxW, fontSize, fontStyle, color) {
-    doc.setFontSize(fontSize);
-    doc.setFont('helvetica', fontStyle);
-    setC(color, 'text');
-    const lines = doc.splitTextToSize(text, maxW);
+  // Justified text renderer — last line is left-aligned
+  function jText(text, x, startY, maxW, fs, style, color) {
+    doc.setFontSize(fs);
+    doc.setFont('helvetica', style);
+    sc(color, 'text');
+    const lines = doc.splitTextToSize(String(text || ''), maxW);
+    let ty = startY;
     lines.forEach((line, idx) => {
       const isLast = idx === lines.length - 1;
       if (isLast || lines.length === 1) {
         doc.text(line, x, ty);
       } else {
         const words = line.trim().split(' ');
-        if (words.length <= 1) { doc.text(line, x, ty); }
-        else {
-          const totalWordW = words.reduce((s, w) => s + doc.getTextWidth(w), 0);
-          const space = (maxW - totalWordW) / (words.length - 1);
+        if (words.length <= 1) {
+          doc.text(line, x, ty);
+        } else {
+          const totalW = words.reduce((s, w) => s + doc.getTextWidth(w), 0);
+          const sp = (maxW - totalW) / (words.length - 1);
           let cx = x;
           words.forEach((w, wi) => {
             doc.text(w, cx, ty);
-            cx += doc.getTextWidth(w) + (wi < words.length - 1 ? space : 0);
+            cx += doc.getTextWidth(w) + (wi < words.length - 1 ? sp : 0);
           });
         }
       }
-      ty += fontSize * 0.42;
+      ty += fs * LH + 1.2;
       y = Math.max(y, ty);
     });
     return ty;
   }
 
-  function sectionLabel(title, subtitle) {
-    checkPage(16);
-    // Solid left bar
-    setC(colors.primary, 'fill');
-    doc.rect(ml, y, 3, subtitle ? 10 : 7, 'F');
-    doc.setFontSize(11);
+  // Regular text (left-aligned, no justify)
+  function lText(text, x, startY, maxW, fs, style, color) {
+    doc.setFontSize(fs);
+    doc.setFont('helvetica', style);
+    sc(color, 'text');
+    const lines = doc.splitTextToSize(String(text || ''), maxW);
+    let ty = startY;
+    lines.forEach(line => {
+      doc.text(line, x, ty);
+      ty += fs * LH + 1.2;
+      y = Math.max(y, ty);
+    });
+    return ty;
+  }
+
+  // Section header with left bar + title + optional subtitle on separate line
+  function sectionHead(title, subtitle) {
+    checkPage(subtitle ? 18 : 14);
+    sc(C.primary, 'fill');
+    doc.rect(ml, y, 3, subtitle ? 12 : 8, 'F');
+    doc.setFontSize(10);
     doc.setFont('helvetica', 'bold');
-    setC(colors.text, 'text');
-    doc.text(title, ml + 6, y + 5.5);
-    y += 7;
+    sc(C.text, 'text');
+    doc.text(title, ml + 6, y + 6);
+    y += 8;
     if (subtitle) {
-      doc.setFontSize(7.5);
+      doc.setFontSize(8);
       doc.setFont('helvetica', 'normal');
-      setC(colors.muted, 'text');
+      sc(C.muted, 'text');
       doc.text(subtitle, ml + 6, y);
       y += 5;
     }
-    y += 4;
+    y += 3;
   }
 
-  function divider() {
+  function divLine() {
     checkPage(5);
-    setC(colors.border, 'draw');
+    sc(C.border, 'draw');
     doc.setLineWidth(0.2);
     doc.line(ml, y, W - mr, y);
     y += 4;
   }
 
-  function cardText(text, x, startY, maxW, fs, style, color) {
-    doc.setFontSize(fs);
-    doc.setFont('helvetica', style);
-    setC(color, 'text');
-    const lines = doc.splitTextToSize(String(text || ''), maxW);
-    lines.forEach(line => {
-      doc.text(line, x, startY);
-      startY += fs * 0.42;
-      y = Math.max(y, startY);
-    });
-    return startY;
+  // Sanitize text for jsPDF — replace problematic unicode chars
+  function sanitize(str) {
+    return (str || '')
+      .replace(/→/g, '->')
+      .replace(/←/g, '<-')
+      .replace(/–/g, '-')
+      .replace(/—/g, '-')
+      .replace(/"/g, '"').replace(/"/g, '"')
+      .replace(/'/g, "'").replace(/'/g, "'")
+      .replace(/\*\*/g, '').replace(/\*/g, '')
+      .replace(/[^\x00-\x7E]/g, '?'); // replace any remaining non-ASCII
   }
 
   // ════════════════════════════════════════════════════════
   // HEADER
   // ════════════════════════════════════════════════════════
   const { passed, total } = getMandatoryCounts(result.mandatory);
-  const nthConfigured = niceToHaveItems && niceToHaveItems.length > 0;
+  const nthOn = niceToHaveItems && niceToHaveItems.length > 0;
+  const candidateName = (result.candidate_name || 'Unknown Candidate').toUpperCase();
 
-  rect(ml, y, cw, 30, colors.primary, null, 3);
+  rr(ml, y, cw, 28, C.headerBg, null, 3);
 
-  // Candidate label
+  // Left: CANDIDATE label + name
   doc.setFontSize(7);
   doc.setFont('helvetica', 'normal');
-  setC([190, 210, 255], 'text');
-  doc.text('CANDIDATE', ml + 6, y + 7);
-
-  // Candidate name
-  doc.setFontSize(17);
-  doc.setFont('helvetica', 'bold');
-  setC(colors.white, 'text');
-  const candidateName = result.candidate_name || 'Unknown Candidate';
-  doc.text(candidateName, ml + 6, y + 19);
-
-  // Right side: two score columns, no overlap
-  const col1x = W - mr - 60;
-  const col2x = W - mr - 28;
-
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'normal');
-  setC([190, 210, 255], 'text');
-  doc.text('MANDATORY', col1x, y + 8, { align: 'center' });
+  sc([180, 200, 240], 'text');
+  doc.text('CANDIDATE', ml + 5, y + 7);
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  setC(colors.white, 'text');
-  doc.text(`${passed}/${total}`, col1x, y + 20, { align: 'center' });
+  sc(C.white, 'text');
+  doc.text(candidateName, ml + 5, y + 19);
+
+  // Right: two score columns — fixed positions, no overlap
+  // mandatory col center at W-mr-44, NtH col center at W-mr-16
+  const c1 = W - mr - 44;
+  const c2 = W - mr - 14;
 
   doc.setFontSize(7);
   doc.setFont('helvetica', 'normal');
-  setC([190, 210, 255], 'text');
-  doc.text('NICE-TO-HAVE', col2x + 8, y + 8, { align: 'center' });
-  doc.setFontSize(nthConfigured ? 14 : 16);
+  sc([180, 200, 240], 'text');
+  doc.text('MANDATORY', c1, y + 7, { align: 'center' });
+  doc.setFontSize(15);
   doc.setFont('helvetica', 'bold');
-  setC(colors.white, 'text');
-  doc.text(nthConfigured ? `${result.nicetohave_total}/100` : '—', col2x + 8, y + 20, { align: 'center' });
+  sc(C.white, 'text');
+  doc.text(`${passed}/${total}`, c1, y + 19, { align: 'center' });
 
-  y += 34;
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'normal');
+  sc([180, 200, 240], 'text');
+  doc.text('NICE-TO-HAVE', c2, y + 7, { align: 'center' });
+  doc.setFontSize(nthOn ? 13 : 15);
+  doc.setFont('helvetica', 'bold');
+  sc(C.white, 'text');
+  doc.text(nthOn ? `${result.nicetohave_total}/100` : '-', c2, y + 19, { align: 'center' });
+
+  y += 32;
 
   // ════════════════════════════════════════════════════════
-  // SCREENING STATUS (top — executive summary principle)
+  // SCREENING STATUS
   // ════════════════════════════════════════════════════════
-  checkPage(20);
-  const statusDef = {
-    'Shortlist':     { fill: [240,253,244], border: colors.pass,  label: colors.pass  },
-    'Consider':      { fill: [255,251,235], border: colors.warn,  label: colors.warn  },
-    'Review Gap':    { fill: [255,237,213], border: colors.accent,label: colors.accent},
-    'Not Qualified': { fill: [255,245,245], border: colors.fail,  label: colors.fail  },
+  checkPage(18);
+  const sdMap = {
+    'Shortlist':     { fill:[240,253,244], border:C.pass,   label:C.pass   },
+    'Consider':      { fill:[255,251,235], border:C.warn,   label:C.warn   },
+    'Review Gap':    { fill:[255,237,213], border:C.accent, label:C.accent },
+    'Not Qualified': { fill:[255,245,245], border:C.fail,   label:C.fail   },
   };
-  const sd = statusDef[screeningStatus] || statusDef['Consider'];
-  const statusDesc = {
-    'Shortlist':     nthConfigured
+  const sd = sdMap[screeningStatus] || sdMap['Consider'];
+  const descText = {
+    'Shortlist':     nthOn
       ? 'Strong mandatory pass rate and nice-to-have score. No critical blockers. Recommended for next stage.'
       : 'Strong mandatory pass rate. No critical blockers. Recommended for next stage.',
     'Consider':      'Meets most requirements with manageable gaps. Worth evaluating further.',
@@ -293,268 +313,291 @@ function generatePDF(result, parsedJD, niceToHaveItems, screeningStatus, composi
     'Not Qualified': 'Multiple critical blockers or insufficient mandatory coverage.',
   }[screeningStatus] || '';
 
-  const descLines = doc.splitTextToSize(statusDesc, cw - 55);
-  const statusH = Math.max(16, descLines.length * 4 + 8);
-  rect(ml, y, cw, statusH, sd.fill, sd.border, 2);
+  const descW = cw - 50;
+  const descLines = doc.splitTextToSize(sanitize(descText), descW);
+  const sH = Math.max(16, descLines.length * (8 * LH + 1.2) + 8);
+  rr(ml, y, cw, sH, sd.fill, sd.border, 2);
 
   doc.setFontSize(7);
   doc.setFont('helvetica', 'bold');
-  setC(colors.muted, 'text');
+  sc(C.muted, 'text');
   doc.text('SCREENING STATUS', ml + 5, y + 5.5);
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
-  setC(sd.label, 'text');
-  doc.text(screeningStatus, ml + 5, y + 12);
+  sc(sd.label, 'text');
+  doc.text(screeningStatus, ml + 5, y + 12.5);
 
+  // Description — right side, right-aligned
   doc.setFontSize(8);
   doc.setFont('helvetica', 'normal');
-  setC(colors.muted, 'text');
+  sc(C.muted, 'text');
+  const descStartY = y + (sH - descLines.length * (8 * LH + 1.2)) / 2 + 4;
   descLines.forEach((line, i) => {
-    doc.text(line, ml + 52, y + 6 + i * 4.2);
+    doc.text(line, W - mr - 3, descStartY + i * (8 * LH + 1.2), { align: 'right' });
   });
-  y += statusH + 5;
+  y += sH + 5;
 
   // ════════════════════════════════════════════════════════
   // STANDOUT OBSERVATION
   // ════════════════════════════════════════════════════════
   if (result.standout_observation) {
-    checkPage(20);
-    const soLines = doc.splitTextToSize(result.standout_observation, cw - 12);
-    const soH = soLines.length * 4.5 + 12;
-    rect(ml, y, cw, soH, [235,240,255], colors.primary, 2);
+    const soClean = sanitize(result.standout_observation);
+    const soLines = doc.splitTextToSize(soClean, cw - 12);
+    const soH = soLines.length * (9 * LH + 1.2) + 14;
+    checkPage(soH + 4);
+    rr(ml, y, cw, soH, [235,240,255], C.primary, 2);
     doc.setFontSize(7);
     doc.setFont('helvetica', 'bold');
-    setC(colors.primary, 'text');
-    doc.text('STANDOUT OBSERVATION', ml + 5, y + 5.5);
-    const soStartY = y + 10.5;
-    soLines.forEach((line, i) => {
-      justifiedText(line, ml + 5, soStartY + i * 4.5, cw - 12, 8.5, 'italic', colors.text);
+    sc(C.primary, 'text');
+    doc.text('STANDOUT OBSERVATION', ml + 5, y + 6);
+    let soY = y + 11;
+    soLines.forEach(line => {
+      jText(line, ml + 5, soY, cw - 12, 9, 'italic', C.text);
+      soY += 9 * LH + 1.2;
     });
-    y += soH + 5;
+    y = soY + 3;
   }
 
   // ════════════════════════════════════════════════════════
   // RECRUITER SUMMARY
   // ════════════════════════════════════════════════════════
-  sectionLabel('RECRUITER SUMMARY');
-  const summaryClean = (result.recruiter_summary || '').replace(/\*\*/g, '').replace(/\*/g, '');
-  const sumLines = doc.splitTextToSize(summaryClean, cw);
-  sumLines.forEach(line => {
-    checkPage(5);
-    justifiedText(line, ml, y, cw, 9, 'normal', colors.text);
-    y += 4.5;
+  sectionHead('RECRUITER SUMMARY');
+  const sumClean = sanitize(result.recruiter_summary || '');
+  // Split into paragraphs first, then lines within each paragraph
+  const paragraphs = sumClean.split(/\n+/).filter(p => p.trim());
+  paragraphs.forEach((para, pi) => {
+    const lines = doc.splitTextToSize(para, cw);
+    lines.forEach((line, li) => {
+      checkPage(6);
+      const isLastInPara = li === lines.length - 1;
+      if (isLastInPara) {
+        lText(line, ml, y, cw, 10, 'normal', C.text);
+      } else {
+        jText(line, ml, y, cw, 10, 'normal', C.text);
+      }
+      y += 10 * LH + 1.2;
+    });
+    if (pi < paragraphs.length - 1) y += 2; // paragraph spacing
   });
-  y += 4;
+  y += 5;
 
   // ════════════════════════════════════════════════════════
   // MANDATORY REQUIREMENTS
   // ════════════════════════════════════════════════════════
-  sectionLabel(`MANDATORY REQUIREMENTS — ${passed}/${total} PASSED`);
+  sectionHead(`MANDATORY REQUIREMENTS - ${passed}/${total} PASSED`);
 
   (result.mandatory || []).forEach(item => {
-    const cardFill = item.pass ? [240,253,244] : [255,245,245];
-    const cardBorder = item.pass ? colors.pass : colors.fail;
-    const evLines = doc.splitTextToSize(item.evidence || '', cw - 20);
-    const cardH = evLines.length * 4 + 12;
+    const evClean = sanitize(item.evidence || '');
+    const evLines = doc.splitTextToSize(evClean, cw - 20);
+    const cardH = evLines.length * (8 * LH + 1.2) + 14;
     checkPage(cardH + 3);
-    rect(ml, y, cw, cardH, cardFill, cardBorder, 2);
+    const cardFill = item.pass ? [240,253,244] : [255,245,245];
+    const cardBorder = item.pass ? C.pass : C.fail;
+    rr(ml, y, cw, cardH, cardFill, cardBorder, 2);
 
-    // PASS/FAIL label
-    doc.setFontSize(7);
-    doc.setFont('helvetica', 'bold');
-    setC(item.pass ? colors.pass : colors.fail, 'text');
-    doc.text(item.pass ? 'PASS' : 'FAIL', ml + 5, y + 6);
-
-    // Skill name
-    doc.setFontSize(8.5);
-    doc.setFont('helvetica', 'bold');
-    setC(colors.text, 'text');
-    doc.text(item.skill, ml + 16, y + 6);
-
-    // Type + confidence — right aligned
-    doc.setFontSize(7);
-    doc.setFont('helvetica', 'normal');
-    setC(colors.muted, 'text');
-    doc.text(`${item.type || ''} · ${item.confidence || ''}`, W - mr - 3, y + 6, { align: 'right' });
-
-    // Evidence
     doc.setFontSize(7.5);
-    setC(colors.muted, 'text');
+    doc.setFont('helvetica', 'bold');
+    sc(item.pass ? C.pass : C.fail, 'text');
+    doc.text(item.pass ? 'PASS' : 'FAIL', ml + 4, y + 7);
+
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    sc(C.text, 'text');
+    doc.text(sanitize(item.skill), ml + 16, y + 7);
+
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'normal');
+    sc(C.muted, 'text');
+    doc.text(`${item.type || ''} · ${item.confidence || ''}`, W - mr - 3, y + 7, { align: 'right' });
+
     evLines.forEach((line, i) => {
-      doc.text(line, ml + 5, y + 10 + i * 4);
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      sc(C.muted, 'text');
+      doc.text(line, ml + 4, y + 11 + i * (8 * LH + 1.2));
     });
     y += cardH + 2;
   });
-  y += 4;
+  y += 5;
 
   // ════════════════════════════════════════════════════════
   // NICE-TO-HAVE
   // ════════════════════════════════════════════════════════
-  sectionLabel(`NICE-TO-HAVE SCORE — ${nthConfigured ? `${result.nicetohave_total}/100` : 'NOT CONFIGURED'}`);
+  sectionHead(`NICE-TO-HAVE SCORE - ${nthOn ? `${result.nicetohave_total}/100` : 'NOT CONFIGURED'}`);
 
-  if (!nthConfigured) {
-    doc.setFontSize(8.5);
+  if (!nthOn) {
+    doc.setFontSize(9);
     doc.setFont('helvetica', 'italic');
-    setC(colors.muted, 'text');
+    sc(C.muted, 'text');
     doc.text('No nice-to-have criteria were defined. Scoring was based entirely on mandatory requirements.', ml, y);
-    y += 8;
+    y += 10;
   } else {
     checkPage(8);
-    setC(colors.border, 'fill');
-    doc.rect(ml, y, cw, 3, 'F');
-    const barC = result.nicetohave_total >= 70 ? colors.pass : result.nicetohave_total >= 40 ? colors.warn : colors.fail;
-    setC(barC, 'fill');
-    doc.rect(ml, y, cw * (result.nicetohave_total / 100), 3, 'F');
-    y += 6;
+    sc(C.border, 'fill');
+    doc.rect(ml, y, cw, 3.5, 'F');
+    const barC = result.nicetohave_total >= 70 ? C.pass : result.nicetohave_total >= 40 ? C.warn : C.fail;
+    sc(barC, 'fill');
+    doc.rect(ml, y, cw * (result.nicetohave_total / 100), 3.5, 'F');
+    y += 7;
 
     (result.nicetohave || []).forEach(item => {
-      const evLines = doc.splitTextToSize(item.evidence || '', cw - 16);
-      const cardH = evLines.length * 4 + 12;
+      const evLines = doc.splitTextToSize(sanitize(item.evidence || ''), cw - 16);
+      const cardH = evLines.length * (8 * LH + 1.2) + 14;
       checkPage(cardH + 3);
-      rect(ml, y, cw, cardH, colors.bgSubtle, colors.border, 2);
-      doc.setFontSize(8.5);
+      rr(ml, y, cw, cardH, C.subtle, C.border, 2);
+      doc.setFontSize(9);
       doc.setFont('helvetica', 'bold');
-      setC(colors.text, 'text');
-      doc.text(item.skill, ml + 5, y + 6);
+      sc(C.text, 'text');
+      doc.text(sanitize(item.skill), ml + 5, y + 7);
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+      sc(item.score > 0 ? C.pass : C.muted, 'text');
+      doc.text(`+${item.score}`, W - mr - 3, y + 7, { align: 'right' });
       doc.setFontSize(7.5);
-      doc.setFont('helvetica', 'bold');
-      setC(item.score > 0 ? colors.pass : colors.muted, 'text');
-      doc.text(`+${item.score}`, W - mr - 3, y + 6, { align: 'right' });
-      doc.setFontSize(7);
       doc.setFont('helvetica', 'normal');
-      setC(colors.muted, 'text');
-      doc.text(`weight: ${item.weight}  ·  ${item.confidence || ''}`, W - mr - 14, y + 6, { align: 'right' });
-      doc.setFontSize(7.5);
-      evLines.forEach((line, i) => { doc.text(line, ml + 5, y + 10 + i * 4); });
+      sc(C.muted, 'text');
+      doc.text(`weight: ${item.weight}  ·  ${item.confidence || ''}`, W - mr - 13, y + 7, { align: 'right' });
+      evLines.forEach((line, i) => {
+        doc.setFontSize(8);
+        sc(C.muted, 'text');
+        doc.text(line, ml + 5, y + 11 + i * (8 * LH + 1.2));
+      });
       y += cardH + 2;
     });
   }
-  y += 4;
+  y += 5;
 
   // ════════════════════════════════════════════════════════
   // QUALITATIVE SIGNALS
   // ════════════════════════════════════════════════════════
-  sectionLabel('QUALITATIVE SIGNALS', '5 standard dimensions — beyond keyword matching');
-  const ratingC = { STRONG: colors.pass, MODERATE: colors.warn, WEAK: colors.fail };
+  sectionHead('QUALITATIVE SIGNALS', '5 standard dimensions - beyond keyword matching');
+  const rC = { STRONG: C.pass, MODERATE: C.warn, WEAK: C.fail };
 
   (result.qualitative_signals || []).forEach(item => {
-    const rc = ratingC[item.rating] || colors.muted;
-    const evLines = doc.splitTextToSize(item.evidence || '', cw - 14);
-    const cardH = evLines.length * 4 + 12;
+    const evClean = sanitize(item.evidence || '');
+    const evLines = doc.splitTextToSize(evClean, cw - 14);
+    const cardH = evLines.length * (8 * LH + 1.2) + 14;
     checkPage(cardH + 3);
-    rect(ml, y, cw, cardH, colors.bgSubtle, colors.border, 2);
-    setC(rc, 'fill');
+    rr(ml, y, cw, cardH, C.subtle, C.border, 2);
+    const rc = rC[item.rating] || C.muted;
+    sc(rc, 'fill');
     doc.rect(ml, y, 2.5, cardH, 'F');
-    doc.setFontSize(8.5);
+    doc.setFontSize(9);
     doc.setFont('helvetica', 'bold');
-    setC(colors.text, 'text');
-    doc.text(item.dimension, ml + 6, y + 6);
-    doc.setFontSize(7.5);
+    sc(C.text, 'text');
+    doc.text(sanitize(item.dimension), ml + 6, y + 7);
+    doc.setFontSize(8);
     doc.setFont('helvetica', 'bold');
-    setC(rc, 'text');
-    doc.text(item.rating, W - mr - 3, y + 6, { align: 'right' });
-    doc.setFontSize(7.5);
-    doc.setFont('helvetica', 'normal');
-    setC(colors.muted, 'text');
-    evLines.forEach((line, i) => { doc.text(line, ml + 6, y + 10 + i * 4); });
+    sc(rc, 'text');
+    doc.text(item.rating, W - mr - 3, y + 7, { align: 'right' });
+    evLines.forEach((line, i) => {
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      sc(C.muted, 'text');
+      doc.text(line, ml + 6, y + 11 + i * (8 * LH + 1.2));
+    });
     y += cardH + 2;
   });
-  y += 4;
+  y += 5;
 
   // ════════════════════════════════════════════════════════
   // ADDITIONAL REQUIREMENTS
   // ════════════════════════════════════════════════════════
   if (result.additional_signals?.length > 0) {
-    sectionLabel('ADDITIONAL REQUIREMENTS', 'Based on additional context provided');
+    sectionHead('ADDITIONAL REQUIREMENTS', 'Based on additional context provided');
     result.additional_signals.forEach(item => {
-      const rc = ratingC[item.rating] || colors.muted;
-      const evLines = doc.splitTextToSize(item.evidence || '', cw - 14);
-      const cardH = evLines.length * 4 + 12;
+      const evLines = doc.splitTextToSize(sanitize(item.evidence || ''), cw - 14);
+      const cardH = evLines.length * (8 * LH + 1.2) + 14;
       checkPage(cardH + 3);
-      rect(ml, y, cw, cardH, [255,240,232], colors.accent, 2);
-      setC(colors.accent, 'fill');
+      rr(ml, y, cw, cardH, [255,240,232], C.accent, 2);
+      sc(C.accent, 'fill');
       doc.rect(ml, y, 2.5, cardH, 'F');
-      doc.setFontSize(8.5);
+      const rc = rC[item.rating] || C.muted;
+      doc.setFontSize(9);
       doc.setFont('helvetica', 'bold');
-      setC(colors.text, 'text');
-      doc.text(item.dimension, ml + 6, y + 6);
-      doc.setFontSize(7.5);
+      sc(C.text, 'text');
+      doc.text(sanitize(item.dimension), ml + 6, y + 7);
+      doc.setFontSize(8);
       doc.setFont('helvetica', 'bold');
-      setC(rc, 'text');
-      doc.text(item.rating, W - mr - 3, y + 6, { align: 'right' });
-      doc.setFontSize(7.5);
-      doc.setFont('helvetica', 'normal');
-      setC(colors.muted, 'text');
-      evLines.forEach((line, i) => { doc.text(line, ml + 6, y + 10 + i * 4); });
+      sc(rc, 'text');
+      doc.text(item.rating, W - mr - 3, y + 7, { align: 'right' });
+      evLines.forEach((line, i) => {
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        sc(C.muted, 'text');
+        doc.text(line, ml + 6, y + 11 + i * (8 * LH + 1.2));
+      });
       y += cardH + 2;
     });
-    y += 4;
+    y += 5;
   }
 
   // ════════════════════════════════════════════════════════
   // GAP ANALYSIS
   // ════════════════════════════════════════════════════════
   if (result.gap_analysis?.length > 0) {
-    sectionLabel('GAP ANALYSIS');
-    const sevC = {
-      'BLOCKER': { fill:[255,245,245], border:colors.fail,   text:colors.fail   },
-      'RAMP-UP': { fill:[255,251,235], border:colors.warn,   text:colors.warn   },
-      'MINOR':   { fill:[240,253,244], border:colors.pass,   text:colors.pass   },
+    sectionHead('GAP ANALYSIS');
+    const sevMap = {
+      'BLOCKER': { fill:[255,245,245], border:C.fail,   text:C.fail   },
+      'RAMP-UP': { fill:[255,251,235], border:C.warn,   text:C.warn   },
+      'MINOR':   { fill:[240,253,244], border:C.pass,   text:C.pass   },
     };
     result.gap_analysis.forEach(item => {
-      const sc = sevC[item.severity] || sevC['MINOR'];
-      const noteLines = doc.splitTextToSize(item.note || '', cw - 20);
-      const cardH = noteLines.length * 4 + 12;
+      const sc2 = sevMap[item.severity] || sevMap['MINOR'];
+      const noteLines = doc.splitTextToSize(sanitize(item.note || ''), cw - 20);
+      const cardH = noteLines.length * (8 * LH + 1.2) + 14;
       checkPage(cardH + 3);
-      rect(ml, y, cw, cardH, sc.fill, sc.border, 2);
-      doc.setFontSize(8.5);
+      rr(ml, y, cw, cardH, sc2.fill, sc2.border, 2);
+      doc.setFontSize(9);
       doc.setFont('helvetica', 'bold');
-      setC(colors.text, 'text');
-      doc.text(item.skill, ml + 5, y + 6);
-      doc.setFontSize(7.5);
+      sc(C.text, 'text');
+      doc.text(sanitize(item.skill), ml + 5, y + 7);
+      doc.setFontSize(8);
       doc.setFont('helvetica', 'bold');
-      setC(sc.text, 'text');
-      doc.text(item.severity, W - mr - 3, y + 6, { align: 'right' });
-      doc.setFontSize(7.5);
-      doc.setFont('helvetica', 'normal');
-      setC(colors.muted, 'text');
-      noteLines.forEach((line, i) => { doc.text(line, ml + 5, y + 10 + i * 4); });
+      sc(sc2.text, 'text');
+      doc.text(item.severity, W - mr - 3, y + 7, { align: 'right' });
+      noteLines.forEach((line, i) => {
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        sc(C.muted, 'text');
+        doc.text(line, ml + 5, y + 11 + i * (8 * LH + 1.2));
+      });
       y += cardH + 2;
     });
-    y += 4;
+    y += 5;
   }
 
   // ════════════════════════════════════════════════════════
   // INTERVIEW QUESTIONS
   // ════════════════════════════════════════════════════════
   if (result.interview_questions?.length > 0) {
-    sectionLabel('SUGGESTED INTERVIEW QUESTIONS', 'Based on gaps and areas needing verification');
+    sectionHead('SUGGESTED INTERVIEW QUESTIONS', 'Based on gaps and areas needing verification');
     result.interview_questions.forEach((q, i) => {
-      const qLines = doc.splitTextToSize(q, cw - 16);
-      const cardH = qLines.length * 4.2 + 10;
+      const qLines = doc.splitTextToSize(sanitize(q), cw - 16);
+      const cardH = qLines.length * (9 * LH + 1.2) + 12;
       checkPage(cardH + 3);
-      rect(ml, y, cw, cardH, colors.bgSubtle, colors.border, 2);
+      rr(ml, y, cw, cardH, C.subtle, C.border, 2);
 
-      // Number circle — properly centered
-      const circleX = ml + 7;
-      const circleY = y + cardH / 2;
-      setC(colors.primary, 'fill');
-      doc.circle(circleX, circleY, 3.8, 'F');
-      doc.setFontSize(7.5);
+      // Perfectly centered number circle
+      const cx = ml + 7.5;
+      const cy = y + cardH / 2;
+      sc(C.primary, 'fill');
+      doc.circle(cx, cy, 4, 'F');
+      doc.setFontSize(8);
       doc.setFont('helvetica', 'bold');
-      setC(colors.white, 'text');
-      // Vertically center the number in the circle
-      doc.text(String(i + 1), circleX, circleY + 2.5, { align: 'center' });
+      sc(C.white, 'text');
+      doc.text(String(i + 1), cx, cy + 2.8, { align: 'center' });
 
-      doc.setFontSize(8.5);
-      doc.setFont('helvetica', 'normal');
-      setC(colors.text, 'text');
+      const textStartY = y + (cardH - qLines.length * (9 * LH + 1.2)) / 2 + 5;
       qLines.forEach((line, j) => {
-        doc.text(line, ml + 14, y + 5.5 + j * 4.2);
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        sc(C.text, 'text');
+        doc.text(line, ml + 14, textStartY + j * (9 * LH + 1.2));
       });
       y += cardH + 2;
     });
-    y += 4;
+    y += 5;
   }
 
   // ════════════════════════════════════════════════════════
@@ -562,81 +605,71 @@ function generatePDF(result, parsedJD, niceToHaveItems, screeningStatus, composi
   // ════════════════════════════════════════════════════════
   if (result._usage) {
     checkPage(18);
-    divider();
-    rect(ml, y, cw, 16, colors.bgSubtle, colors.border, 2);
+    divLine();
+    rr(ml, y, cw, 16, C.subtle, C.border, 2);
     doc.setFontSize(7);
     doc.setFont('helvetica', 'bold');
-    setC(colors.muted, 'text');
+    sc(C.muted, 'text');
     doc.text('TOKEN USAGE & COST', ml + 5, y + 5.5);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    sc(C.text, 'text');
+    doc.text(`${result._usage.input_tokens.toLocaleString()} in  ·  ${result._usage.output_tokens.toLocaleString()} out  ·  ${result._usage.total_tokens.toLocaleString()} total tokens`, ml + 5, y + 11.5);
     doc.setFontSize(8);
-    doc.setFont('helvetica', 'normal');
-    setC(colors.text, 'text');
-    doc.text(`${result._usage.input_tokens.toLocaleString()} in  ·  ${result._usage.output_tokens.toLocaleString()} out  ·  ${result._usage.total_tokens.toLocaleString()} total tokens`, ml + 5, y + 10.5);
-    doc.setFontSize(7.5);
     doc.setFont('helvetica', 'bold');
-    setC(colors.primary, 'text');
+    sc(C.primary, 'text');
     doc.text(`Actual (Haiku): $${result._usage.cost_usd.toFixed(4)}`, W - mr - 5, y + 6.5, { align: 'right' });
-    const sonnetCost = ((result._usage.input_tokens / 1e6 * 3) + (result._usage.output_tokens / 1e6 * 15)).toFixed(4);
+    const sonnetCost = ((result._usage.input_tokens/1e6*3)+(result._usage.output_tokens/1e6*15)).toFixed(4);
     doc.setFontSize(7.5);
     doc.setFont('helvetica', 'normal');
-    setC(colors.muted, 'text');
-    doc.text(`Est. (Sonnet): $${sonnetCost}`, W - mr - 5, y + 11.5, { align: 'right' });
+    sc(C.muted, 'text');
+    doc.text(`Est. (Sonnet): $${sonnetCost}`, W - mr - 5, y + 12, { align: 'right' });
     y += 20;
 
-    // Score footnote
     const { passed: fp, total: ft } = getMandatoryCounts(result.mandatory);
-    const nthLabel = niceToHaveItems?.length > 0 ? `NtH x 40/100` : 'NtH not configured';
-    doc.setFontSize(7);
-    doc.setFont('helvetica', 'normal');
-    setC(colors.muted, 'text');
-    doc.text(`Score: mandatory (${fp}/${ft}) x ${niceToHaveItems?.length > 0 ? 60 : 100} + ${nthLabel} - blockers x 50 = ${Math.round(compositeScore)} pts`, ml, y);
+    const nthLabel = nthOn ? 'NtH x 40/100' : 'NtH not configured';
+    doc.setFontSize(7.5);
+    sc(C.muted, 'text');
+    doc.text(`Score: mandatory (${fp}/${ft}) x ${nthOn ? 60 : 100} + ${nthLabel} - blockers x 50 = ${Math.round(compositeScore)} pts`, ml, y);
     y += 5;
   }
 
   // ════════════════════════════════════════════════════════
-  // WATERMARK + HEADER/FOOTER on every page
+  // HEADER + FOOTER on every page (no watermark)
   // ════════════════════════════════════════════════════════
   const pageCount = doc.getNumberOfPages();
+  const dateStr = new Date().toISOString().slice(0,10);
+
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
 
-    // Watermark — subtle diagonal text
-    doc.setFontSize(28);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(230, 235, 245);
-    doc.text('CONFIDENTIAL', W / 2, H / 2, {
-      align: 'center',
-      angle: 45,
-    });
-
     // Header line
-    setC(colors.primary, 'draw');
+    sc(C.primary, 'draw');
     doc.setLineWidth(0.4);
     doc.line(ml, 14, W - mr, 14);
-    doc.setFontSize(7.5);
+    doc.setFontSize(8);
     doc.setFont('helvetica', 'bold');
-    setC(colors.primary, 'text');
+    sc(C.primary, 'text');
     doc.text('CV Screening Assistant', ml, 11);
+    doc.setFontSize(7.5);
     doc.setFont('helvetica', 'normal');
-    setC(colors.muted, 'text');
-    doc.text('by M Irfan Avianto  ·  Astro Personal AI Challenge', ml + 42, 11);
-    const date = new Date().toISOString().slice(0,10);
-    doc.text(`${date}  ·  ${result.candidate_name || 'Candidate'}`, W - mr, 11, { align: 'right' });
+    sc(C.muted, 'text');
+    doc.text('by M Irfan Avianto  ·  Astro Personal AI Challenge', ml + 44, 11);
+    doc.text(`${dateStr}  ·  ${candidateName}`, W - mr, 11, { align: 'right' });
 
     // Footer line
-    setC(colors.border, 'draw');
+    sc(C.border, 'draw');
     doc.setLineWidth(0.2);
     doc.line(ml, H - 12, W - mr, H - 12);
     doc.setFontSize(7);
     doc.setFont('helvetica', 'normal');
-    setC(colors.muted, 'text');
-    doc.text('AI outputs are recommendations, not decisions. For internal use only.', ml, H - 8);
+    sc(C.muted, 'text');
+    doc.text('AI outputs are recommendations, not final decisions.  ·  CONFIDENTIAL  ·  For internal use only.', ml, H - 8);
     doc.text(`${i} / ${pageCount}`, W - mr, H - 8, { align: 'right' });
   }
 
-  // Save
-  const dateStr = new Date().toISOString().slice(0,10);
-  const nameStr = (result.candidate_name || 'Candidate').replace(/\s+/g, '-');
+  // Save — filename uses UPPERCASE candidate name
+  const nameStr = candidateName.replace(/\s+/g, '-');
   doc.save(`${dateStr}_${nameStr}_CV-Analysis.pdf`);
 }
 
@@ -1706,6 +1739,30 @@ export default function Home({ theme, toggleTheme }) {
             {(result._truncated || result._cv_trimmed) && (
               <div className="warning-banner" style={{ marginBottom: 20 }}>
                 ⚠️ CV text was trimmed to fit the analysis limit. For best results, paste only the relevant sections (Summary, Skills, Experience, Education) and remove any unrelated content.
+              </div>
+            )}
+
+            {/* Standout Observation */}
+            {result.standout_observation && (
+              <div style={{
+                display: 'flex',
+                gap: 12,
+                padding: '12px 16px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'var(--primary-light)',
+                border: '1px solid var(--primary)',
+                marginBottom: 20,
+                alignItems: 'flex-start',
+              }}>
+                <span style={{ fontSize: '1.1rem', flexShrink: 0 }}>⭐</span>
+                <div>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>
+                    Standout Observation
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text)', fontStyle: 'italic' }}>
+                    {result.standout_observation}
+                  </p>
+                </div>
               </div>
             )}
 
