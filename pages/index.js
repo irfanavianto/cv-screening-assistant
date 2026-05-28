@@ -1,6 +1,7 @@
 // pages/index.js
 import { useState, useRef } from 'react';
 import Head from 'next/head';
+import { jsPDF } from 'jspdf';
 
 // ─── Lightweight markdown renderer (bold, italic, paragraphs) ───
 function renderMarkdown(text) {
@@ -31,40 +32,44 @@ function renderMarkdown(text) {
 // ─── Shared constants ────────────────────────────────────────
 const CV_CHAR_LIMIT = 6000;
 
-// ─── Screening Status logic (composite scoring) ─────────────────
-// Iteration 3: BLOCKER gaps cap the status, RAMP-UP/MINOR are
-// informational only. Status determined by mandatory pass rate
-// + NtH score, with BLOCKER penalty applied on top.
+// ─── Screening Status logic (composite scoring, adaptive) ────────
+// Formula adapts based on whether NtH is configured:
 //
-// compositeScore = mandatoryBase (0-60) + nthContribution (0-40)
-//                - blockerPenalty (50 per BLOCKER)
+// NtH NOT configured (empty array):
+//   Score = (passed/total) × 100 − (BLOCKER × 50)
+//   → purely mandatory-based, max 100 pts
 //
-// Shortlist  : score >= 70  (strong fit, proceed to interview)
-// Consider   : score >= 45  (worth evaluating, minor concerns)
-// Review Gap : score >= 20  (has BLOCKER or weak across both)
-// Not Qualified: score < 20 (significant blockers or very weak)
-function getScreeningStatus(mandatorySummary, niceToHaveTotal, gapAnalysis) {
+// NtH configured:
+//   Score = (passed/total) × 60 + (NtH score × 40/100) − (BLOCKER × 50)
+//   → 60 pts from mandatory + 40 pts from NtH, max 100 pts
+//
+// Shortlist    : score ≥ 70
+// Consider     : score ≥ 45
+// Review Gap   : score ≥ 20
+// Not Qualified: score < 20
+function getScreeningStatus(mandatorySummary, niceToHaveTotal, gapAnalysis, niceToHaveItems) {
   const { passed, total } = mandatorySummary || { passed: 0, total: 0 };
   const gaps = gapAnalysis || [];
+  const nthConfigured = niceToHaveItems && niceToHaveItems.length > 0;
 
-  // Count BLOCKER gaps — these are the only ones that penalize score
-  const blockerCount = gaps.filter(g => g.severity === 'BLOCKER').length;
+  const blockerCount   = gaps.filter(g => g.severity === 'BLOCKER').length;
+  const blockerPenalty = blockerCount * 50;
 
-  // Composite score components
-  const mandatoryBase    = total > 0 ? (passed / total) * 60 : 0;
-  const nthContribution  = (niceToHaveTotal || 0) * 0.4;
-  const blockerPenalty   = blockerCount * 50;
-  const compositeScore   = mandatoryBase + nthContribution - blockerPenalty;
+  let compositeScore;
+  if (!nthConfigured) {
+    // NtH not set — score purely from mandatory (max 100)
+    compositeScore = total > 0 ? (passed / total) * 100 - blockerPenalty : 0;
+  } else {
+    // NtH configured — 60/40 split
+    const mandatoryBase   = total > 0 ? (passed / total) * 60 : 0;
+    const nthContribution = (niceToHaveTotal || 0) * (40 / 100);
+    compositeScore = mandatoryBase + nthContribution - blockerPenalty;
+  }
 
   if (compositeScore >= 70) return 'Shortlist';
   if (compositeScore >= 45) return 'Consider';
   if (compositeScore >= 20) return 'Review Gap';
   return 'Not Qualified';
-}
-
-// ─── PDF export via browser print ────────────────────────────────
-function exportToPDF(result, jobTitle) {
-  window.print();
 }
 
 // ─── Excel export via SheetJS ────────────────────────────────────
@@ -106,11 +111,481 @@ async function exportToExcel(records) {
   XLSX.writeFile(wb, `CV-Screening-Results_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
+// ─── jsPDF export ────────────────────────────────────────────────
+function generatePDF(result, parsedJD, niceToHaveItems, screeningStatus, compositeScore) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const W = 210, H = 297;
+  const ml = 20, mr = 20, mt = 20;
+  const cw = W - ml - mr; // content width
+  let y = mt;
+  const colors = {
+    primary:  [0, 71, 204],
+    pass:     [22, 163, 74],
+    fail:     [220, 38, 38],
+    warn:     [217, 119, 6],
+    text:     [13, 27, 42],
+    muted:    [90, 104, 128],
+    border:   [221, 227, 238],
+    bgSubtle: [245, 247, 250],
+    accent:   [255, 107, 43],
+  };
+
+  // ── helpers ──
+  function setColor(rgb, type = 'text') {
+    if (type === 'text') doc.setTextColor(...rgb);
+    else if (type === 'fill') doc.setFillColor(...rgb);
+    else if (type === 'draw') doc.setDrawColor(...rgb);
+  }
+
+  function checkPageBreak(needed = 10) {
+    if (y + needed > H - 20) {
+      doc.addPage();
+      y = mt;
+    }
+  }
+
+  function drawRect(x, ry, w, h, fillRgb, drawRgb, radius = 2) {
+    if (fillRgb) { setColor(fillRgb, 'fill'); }
+    if (drawRgb) { setColor(drawRgb, 'draw'); doc.setLineWidth(0.3); }
+    const style = fillRgb && drawRgb ? 'FD' : fillRgb ? 'F' : 'D';
+    doc.roundedRect(x, ry, w, h, radius, radius, style);
+  }
+
+  function sectionHeader(icon, title, subtitle) {
+    checkPageBreak(18);
+    setColor(colors.primary, 'fill');
+    doc.setFontSize(9);
+    doc.roundedRect(ml, y, 8, 8, 1, 1, 'F');
+    setColor([255,255,255], 'text');
+    doc.text(icon, ml + 4, y + 5.5, { align: 'center' });
+    setColor(colors.text, 'text');
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text(title, ml + 11, y + 5.5);
+    y += 10;
+    if (subtitle) {
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      setColor(colors.muted, 'text');
+      doc.text(subtitle, ml + 11, y);
+      y += 5;
+    }
+    y += 3;
+  }
+
+  function wrappedText(text, x, startY, maxW, fontSize = 9, fontStyle = 'normal', colorRgb = colors.text) {
+    doc.setFontSize(fontSize);
+    doc.setFont('helvetica', fontStyle);
+    setColor(colorRgb, 'text');
+    const lines = doc.splitTextToSize(String(text || ''), maxW);
+    lines.forEach(line => {
+      checkPageBreak(5);
+      doc.text(line, x, startY);
+      startY += fontSize * 0.45;
+      y = Math.max(y, startY);
+    });
+    return startY;
+  }
+
+  function divider() {
+    checkPageBreak(6);
+    setColor(colors.border, 'draw');
+    doc.setLineWidth(0.2);
+    doc.line(ml, y, W - mr, y);
+    y += 4;
+  }
+
+  // ════════════════════════════════════════════════
+  // HEADER — Candidate name + scores
+  // ════════════════════════════════════════════════
+  drawRect(ml, y, cw, 28, colors.primary, null, 3);
+
+  // Candidate label
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'normal');
+  setColor([200, 220, 255], 'text');
+  doc.text('CANDIDATE', ml + 6, y + 7);
+
+  // Candidate name — large, white, bold
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  setColor([255, 255, 255], 'text');
+  doc.text(result.candidate_name || 'Unknown Candidate', ml + 6, y + 17);
+
+  // Scores on right
+  const passed = result.mandatory_summary?.passed ?? 0;
+  const total = result.mandatory_summary?.total ?? 0;
+  const nthConfigured = niceToHaveItems && niceToHaveItems.length > 0;
+
+  // Mandatory score
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  setColor([255,255,255], 'text');
+  doc.text(`${passed}/${total}`, W - mr - 52, y + 17);
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'normal');
+  setColor([200, 220, 255], 'text');
+  doc.text('MANDATORY', W - mr - 52, y + 23);
+
+  // NtH score
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  setColor([255,255,255], 'text');
+  doc.text(nthConfigured ? `${result.nicetohave_total}/100` : '—', W - mr - 22, y + 17, { align: 'right' });
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'normal');
+  setColor([200, 220, 255], 'text');
+  doc.text('NICE-TO-HAVE', W - mr - 22, y + 23, { align: 'right' });
+
+  y += 32;
+
+  // ════════════════════════════════════════════════
+  // STANDOUT OBSERVATION
+  // ════════════════════════════════════════════════
+  if (result.standout_observation) {
+    checkPageBreak(20);
+    drawRect(ml, y, cw, 4, null, null);
+    const soText = doc.splitTextToSize(`⭐  ${result.standout_observation}`, cw - 12);
+    const soH = soText.length * 4.5 + 8;
+    drawRect(ml, y, cw, soH, [235, 240, 255], colors.primary, 2);
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'bold');
+    setColor(colors.primary, 'text');
+    doc.text('STANDOUT OBSERVATION', ml + 6, y + 5);
+    doc.setFontSize(8.5);
+    doc.setFont('helvetica', 'italic');
+    setColor(colors.text, 'text');
+    const soLines = doc.splitTextToSize(result.standout_observation, cw - 12);
+    soLines.forEach((line, i) => {
+      doc.text(line, ml + 6, y + 10 + i * 4.5);
+    });
+    y += soH + 4;
+  }
+
+  // ════════════════════════════════════════════════
+  // RECRUITER SUMMARY
+  // ════════════════════════════════════════════════
+  sectionHeader('💡', 'Recruiter Summary');
+  const summaryClean = (result.recruiter_summary || '').replace(/\*\*/g, '').replace(/\*/g, '');
+  const summaryLines = doc.splitTextToSize(summaryClean, cw);
+  summaryLines.forEach(line => {
+    checkPageBreak(5);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    setColor(colors.text, 'text');
+    doc.text(line, ml, y);
+    y += 4.5;
+  });
+  y += 4;
+
+  // ════════════════════════════════════════════════
+  // MANDATORY REQUIREMENTS
+  // ════════════════════════════════════════════════
+  const allPass = passed === total;
+  sectionHeader('🔒', `Mandatory Requirements — ${passed}/${total} passed`);
+
+  (result.mandatory || []).forEach(item => {
+    const cardBg = item.pass ? [240, 253, 244] : [255, 245, 245];
+    const cardBorder = item.pass ? colors.pass : colors.fail;
+    const evidenceLines = doc.splitTextToSize(item.evidence || '', cw - 18);
+    const cardH = 8 + evidenceLines.length * 4 + 3;
+    checkPageBreak(cardH + 3);
+    drawRect(ml, y, cw, cardH, cardBg, cardBorder, 2);
+    // Icon
+    doc.setFontSize(9);
+    setColor(item.pass ? colors.pass : colors.fail, 'text');
+    doc.text(item.pass ? '✓' : '✗', ml + 4, y + 5.5);
+    // Skill name
+    doc.setFontSize(8.5);
+    doc.setFont('helvetica', 'bold');
+    setColor(colors.text, 'text');
+    doc.text(item.skill, ml + 9, y + 5.5);
+    // Type + confidence badge (right)
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'normal');
+    setColor(colors.muted, 'text');
+    doc.text(`${item.type || ''} · ${item.confidence || ''}`, W - mr - 3, y + 5.5, { align: 'right' });
+    // Evidence
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'normal');
+    setColor(colors.muted, 'text');
+    evidenceLines.forEach((line, i) => {
+      doc.text(line, ml + 9, y + 10 + i * 4);
+    });
+    y += cardH + 2;
+  });
+  y += 4;
+
+  // ════════════════════════════════════════════════
+  // NICE-TO-HAVE
+  // ════════════════════════════════════════════════
+  sectionHeader('⭐', `Nice-to-Have Score — ${nthConfigured ? `${result.nicetohave_total}/100` : 'Not configured'}`);
+
+  if (!nthConfigured) {
+    doc.setFontSize(8.5);
+    doc.setFont('helvetica', 'italic');
+    setColor(colors.muted, 'text');
+    doc.text('No nice-to-have criteria were defined. Scoring was based entirely on mandatory requirements.', ml, y);
+    y += 8;
+  } else {
+    // Progress bar
+    checkPageBreak(10);
+    setColor(colors.border, 'fill');
+    doc.rect(ml, y, cw, 3, 'F');
+    const barColor = result.nicetohave_total >= 70 ? colors.pass : result.nicetohave_total >= 40 ? colors.warn : colors.fail;
+    setColor(barColor, 'fill');
+    doc.rect(ml, y, cw * (result.nicetohave_total / 100), 3, 'F');
+    y += 6;
+
+    (result.nicetohave || []).forEach(item => {
+      const evidenceLines = doc.splitTextToSize(item.evidence || '', cw - 18);
+      const cardH = 8 + evidenceLines.length * 4 + 3;
+      checkPageBreak(cardH + 3);
+      drawRect(ml, y, cw, cardH, colors.bgSubtle, colors.border, 2);
+      doc.setFontSize(8.5);
+      doc.setFont('helvetica', 'bold');
+      setColor(colors.text, 'text');
+      doc.text(item.skill, ml + 5, y + 5.5);
+      // Weight + score right
+      doc.setFontSize(7.5);
+      doc.setFont('helvetica', 'normal');
+      setColor(item.score > 0 ? colors.pass : colors.muted, 'text');
+      doc.text(`+${item.score}`, W - mr - 3, y + 5.5, { align: 'right' });
+      setColor(colors.muted, 'text');
+      doc.text(`weight: ${item.weight}  ·  ${item.confidence || ''}`, W - mr - 12, y + 5.5, { align: 'right' });
+      doc.setFontSize(7.5);
+      setColor(colors.muted, 'text');
+      evidenceLines.forEach((line, i) => {
+        doc.text(line, ml + 5, y + 10 + i * 4);
+      });
+      y += cardH + 2;
+    });
+  }
+  y += 4;
+
+  // ════════════════════════════════════════════════
+  // QUALITATIVE SIGNALS
+  // ════════════════════════════════════════════════
+  sectionHeader('🔍', 'Qualitative Signals', '5 standard dimensions — beyond keyword matching');
+  const ratingColors = { STRONG: colors.pass, MODERATE: colors.warn, WEAK: colors.fail };
+
+  (result.qualitative_signals || []).forEach(item => {
+    const rc = ratingColors[item.rating] || colors.muted;
+    const evidenceLines = doc.splitTextToSize(item.evidence || '', cw - 14);
+    const cardH = 8 + evidenceLines.length * 4 + 3;
+    checkPageBreak(cardH + 3);
+    drawRect(ml, y, cw, cardH, colors.bgSubtle, colors.border, 2);
+    // Left accent bar
+    setColor(rc, 'fill');
+    doc.rect(ml, y, 2, cardH, 'F');
+    doc.setFontSize(8.5);
+    doc.setFont('helvetica', 'bold');
+    setColor(colors.text, 'text');
+    doc.text(item.dimension, ml + 6, y + 5.5);
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'bold');
+    setColor(rc, 'text');
+    doc.text(item.rating, W - mr - 3, y + 5.5, { align: 'right' });
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'normal');
+    setColor(colors.muted, 'text');
+    evidenceLines.forEach((line, i) => {
+      doc.text(line, ml + 6, y + 10 + i * 4);
+    });
+    y += cardH + 2;
+  });
+  y += 4;
+
+  // ════════════════════════════════════════════════
+  // ADDITIONAL REQUIREMENTS (if any)
+  // ════════════════════════════════════════════════
+  if (result.additional_signals?.length > 0) {
+    sectionHeader('💬', 'Additional Requirements', 'Based on additional context provided for this role');
+    result.additional_signals.forEach(item => {
+      const rc = ratingColors[item.rating] || colors.muted;
+      const evidenceLines = doc.splitTextToSize(item.evidence || '', cw - 14);
+      const cardH = 8 + evidenceLines.length * 4 + 3;
+      checkPageBreak(cardH + 3);
+      drawRect(ml, y, cw, cardH, [255, 240, 232], colors.accent, 2);
+      setColor(colors.accent, 'fill');
+      doc.rect(ml, y, 2, cardH, 'F');
+      doc.setFontSize(8.5);
+      doc.setFont('helvetica', 'bold');
+      setColor(colors.text, 'text');
+      doc.text(item.dimension, ml + 6, y + 5.5);
+      doc.setFontSize(7.5);
+      doc.setFont('helvetica', 'bold');
+      setColor(rc, 'text');
+      doc.text(item.rating, W - mr - 3, y + 5.5, { align: 'right' });
+      doc.setFontSize(7.5);
+      doc.setFont('helvetica', 'normal');
+      setColor(colors.muted, 'text');
+      evidenceLines.forEach((line, i) => {
+        doc.text(line, ml + 6, y + 10 + i * 4);
+      });
+      y += cardH + 2;
+    });
+    y += 4;
+  }
+
+  // ════════════════════════════════════════════════
+  // GAP ANALYSIS
+  // ════════════════════════════════════════════════
+  if (result.gap_analysis?.length > 0) {
+    sectionHeader('⚡', 'Gap Analysis');
+    const severityColors = {
+      'BLOCKER':  { bg: [255, 245, 245], border: colors.fail,  text: colors.fail },
+      'RAMP-UP':  { bg: [255, 251, 235], border: colors.warn,  text: colors.warn },
+      'MINOR':    { bg: [240, 253, 244], border: colors.pass,  text: colors.pass },
+    };
+    result.gap_analysis.forEach(item => {
+      const sc = severityColors[item.severity] || severityColors['MINOR'];
+      const noteLines = doc.splitTextToSize(item.note || '', cw - 18);
+      const cardH = 8 + noteLines.length * 4 + 3;
+      checkPageBreak(cardH + 3);
+      drawRect(ml, y, cw, cardH, sc.bg, sc.border, 2);
+      doc.setFontSize(8.5);
+      doc.setFont('helvetica', 'bold');
+      setColor(colors.text, 'text');
+      doc.text(item.skill, ml + 5, y + 5.5);
+      // Severity badge
+      doc.setFontSize(7);
+      doc.setFont('helvetica', 'bold');
+      setColor(sc.text, 'text');
+      doc.text(item.severity, W - mr - 3, y + 5.5, { align: 'right' });
+      doc.setFontSize(7.5);
+      doc.setFont('helvetica', 'normal');
+      setColor(colors.muted, 'text');
+      noteLines.forEach((line, i) => {
+        doc.text(line, ml + 5, y + 10 + i * 4);
+      });
+      y += cardH + 2;
+    });
+    y += 4;
+  }
+
+  // ════════════════════════════════════════════════
+  // INTERVIEW QUESTIONS
+  // ════════════════════════════════════════════════
+  if (result.interview_questions?.length > 0) {
+    sectionHeader('🎤', 'Suggested Interview Questions', 'Based on gaps and areas needing verification');
+    result.interview_questions.forEach((q, i) => {
+      const qLines = doc.splitTextToSize(q, cw - 14);
+      const cardH = 6 + qLines.length * 4 + 4;
+      checkPageBreak(cardH + 3);
+      drawRect(ml, y, cw, cardH, colors.bgSubtle, colors.border, 2);
+      // Number circle
+      setColor(colors.primary, 'fill');
+      doc.circle(ml + 7, y + cardH/2, 3.5, 'F');
+      doc.setFontSize(7.5);
+      doc.setFont('helvetica', 'bold');
+      setColor([255,255,255], 'text');
+      doc.text(String(i + 1), ml + 7, y + cardH/2 + 2.5, { align: 'center' });
+      doc.setFontSize(8.5);
+      doc.setFont('helvetica', 'normal');
+      setColor(colors.text, 'text');
+      qLines.forEach((line, j) => {
+        doc.text(line, ml + 13, y + 6 + j * 4);
+      });
+      y += cardH + 2;
+    });
+    y += 4;
+  }
+
+  // ════════════════════════════════════════════════
+  // SCREENING STATUS + TOKEN USAGE
+  // ════════════════════════════════════════════════
+  checkPageBreak(40);
+  divider();
+
+  // Screening status box
+  const statusColors = {
+    'Shortlist':     { bg: [240, 253, 244], border: colors.pass,  dot: colors.pass },
+    'Consider':      { bg: [255, 251, 235], border: colors.warn,  dot: colors.warn },
+    'Review Gap':    { bg: [255, 237, 213], border: colors.accent, dot: colors.accent },
+    'Not Qualified': { bg: [255, 245, 245], border: colors.fail,  dot: colors.fail },
+  };
+  const sc2 = statusColors[screeningStatus] || statusColors['Consider'];
+  drawRect(ml, y, cw * 0.48, 22, sc2.bg, sc2.border, 2);
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'bold');
+  setColor(colors.muted, 'text');
+  doc.text('SCREENING STATUS', ml + 5, y + 6);
+  setColor(sc2.dot, 'fill');
+  doc.circle(ml + 8, y + 14, 3, 'F');
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  setColor(colors.text, 'text');
+  doc.text(screeningStatus, ml + 13, y + 16);
+
+  // Token usage box
+  if (result._usage) {
+    drawRect(ml + cw * 0.52, y, cw * 0.48, 22, colors.bgSubtle, colors.border, 2);
+    const ux = ml + cw * 0.52 + 5;
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'bold');
+    setColor(colors.muted, 'text');
+    doc.text('TOKEN USAGE & COST', ux, y + 6);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    setColor(colors.text, 'text');
+    doc.text(`${result._usage.input_tokens.toLocaleString()} in · ${result._usage.output_tokens.toLocaleString()} out · ${result._usage.total_tokens.toLocaleString()} total`, ux, y + 12);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    setColor(colors.primary, 'text');
+    doc.text(`Haiku: $${result._usage.cost_usd.toFixed(4)}`, ux, y + 18);
+    const sonnetCost = ((result._usage.input_tokens / 1e6 * 3) + (result._usage.output_tokens / 1e6 * 15)).toFixed(4);
+    setColor(colors.muted, 'text');
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Est. Sonnet: $${sonnetCost}`, ux + 35, y + 18);
+  }
+  y += 26;
+
+  // Score formula footnote
+  const nthLabel = niceToHaveItems?.length > 0 ? `NtH score × 40/100` : 'NtH not configured';
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'normal');
+  setColor(colors.muted, 'text');
+  doc.text(`Score basis: mandatory (${result.mandatory_summary?.passed}/${result.mandatory_summary?.total}) × ${niceToHaveItems?.length > 0 ? 60 : 100} + ${nthLabel} − blockers × 50 = ${Math.round(compositeScore)} pts`, ml, y);
+  y += 5;
+
+  // ════════════════════════════════════════════════
+  // FOOTER on every page
+  // ════════════════════════════════════════════════
+  const pageCount = doc.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'normal');
+    setColor(colors.muted, 'text');
+    doc.text('CV Screening Assistant · Astro Technologies Indonesia · AI outputs are recommendations, not decisions.', ml, H - 10);
+    doc.text(`${i} / ${pageCount}`, W - mr, H - 10, { align: 'right' });
+    // Top border line on every page
+    setColor(colors.primary, 'draw');
+    doc.setLineWidth(0.5);
+    doc.line(ml, 12, W - mr, 12);
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'bold');
+    setColor(colors.primary, 'text');
+    doc.text('CV Screening Assistant · Astro Internal Tool', ml, 10);
+    // Date + candidate on header right
+    doc.setFont('helvetica', 'normal');
+    setColor(colors.muted, 'text');
+    const date = new Date().toISOString().slice(0,10);
+    doc.text(`${date} · ${result.candidate_name || 'Candidate'}`, W - mr, 10, { align: 'right' });
+  }
+
+  // Save
+  const date = new Date().toISOString().slice(0,10);
+  const name = (result.candidate_name || 'Candidate').replace(/\s+/g, '-');
+  doc.save(`${date}_${name}_CV-Analysis.pdf`);
+}
+
 // ─── localStorage helpers ─────────────────────────────────────────
 const LS_KEY = 'astro_cv_screening_records';
 
 function saveRecord(result, jobTitle) {
-  const status = getScreeningStatus(result.mandatory_summary, result.nicetohave_total, result.gap_analysis);
+  const status = getScreeningStatus(result.mandatory_summary, result.nicetohave_total, result.gap_analysis, result.nicetohave);
   const topGap = result.gap_analysis?.find(g => g.severity === 'BLOCKER')?.skill
     || result.gap_analysis?.find(g => g.severity === 'RAMP-UP')?.skill
     || result.gap_analysis?.[0]?.skill
@@ -749,9 +1224,7 @@ export default function Home({ theme, toggleTheme }) {
                 <div>
                   <h2>Additional Context <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '0.8rem' }}>(optional)</span></h2>
                   <p style={{ margin: 0, fontSize: '0.85rem' }}>
-                    Qualitative nuances that are hard to measure — e.g. "comfortable with ambiguity" or
-                    "supply chain exposure preferred." For hard requirements use <strong>Mandatory</strong>;
-                    for measurable preferences use <strong>Nice-to-Have</strong>.
+                    Any qualitative nuance for this hire — e.g. "must be comfortable with ambiguity", "experience with local vendors preferred".
                   </p>
                 </div>
               </div>
@@ -1105,8 +1578,10 @@ export default function Home({ theme, toggleTheme }) {
                   </div>
                   <div style={{ textAlign: 'center' }}>
                     <div style={{ fontSize: '1.8rem', fontWeight: 800 }}>
-                      {result.nicetohave_total}
-                      <span style={{ fontSize: '1rem', opacity: 0.7 }}>/100</span>
+                      {result.nicetohave?.length > 0
+                        ? <>{result.nicetohave_total}<span style={{ fontSize: '1rem', opacity: 0.7 }}>/100</span></>
+                        : <span style={{ fontSize: '1rem', opacity: 0.6 }}>—</span>
+                      }
                     </div>
                     <div style={{ fontSize: '0.72rem', opacity: 0.7 }}>NICE-TO-HAVE</div>
                   </div>
@@ -1118,30 +1593,6 @@ export default function Home({ theme, toggleTheme }) {
             {(result._truncated || result._cv_trimmed) && (
               <div className="warning-banner" style={{ marginBottom: 20 }}>
                 ⚠️ CV text was trimmed to fit the analysis limit. For best results, paste only the relevant sections (Summary, Skills, Experience, Education) and remove any unrelated content.
-              </div>
-            )}
-
-            {/* Standout Observation */}
-            {result.standout_observation && (
-              <div style={{
-                display: 'flex',
-                gap: 12,
-                padding: '12px 16px',
-                borderRadius: 'var(--radius-sm)',
-                background: 'var(--primary-light)',
-                border: '1px solid var(--primary)',
-                marginBottom: 20,
-                alignItems: 'flex-start',
-              }}>
-                <span style={{ fontSize: '1.1rem', flexShrink: 0 }}>⭐</span>
-                <div>
-                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>
-                    Standout Observation
-                  </div>
-                  <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text)', fontStyle: 'italic' }}>
-                    {result.standout_observation}
-                  </p>
-                </div>
               </div>
             )}
 
@@ -1181,22 +1632,36 @@ export default function Home({ theme, toggleTheme }) {
             <div className="card" style={{ marginBottom: 20 }}>
               <div className="section-header">
                 <div className="section-icon">⭐</div>
-                <h2>Nice-to-Have Score — {result.nicetohave_total}/100</h2>
+                <h2>
+                  Nice-to-Have Score —{' '}
+                  {result.nicetohave?.length > 0
+                    ? <>{result.nicetohave_total}/100</>
+                    : <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)', fontWeight: 400 }}>Not configured</span>
+                  }
+                </h2>
               </div>
-              <div className="progress-bar" style={{ height: 10, marginBottom: 20 }}>
-                <div
-                  className="progress-fill"
-                  style={{
-                    width: `${result.nicetohave_total}%`,
-                    background: result.nicetohave_total >= 70
-                      ? 'var(--pass)'
-                      : result.nicetohave_total >= 40
-                      ? 'var(--warn)'
-                      : 'var(--fail)',
-                  }}
-                />
-              </div>
-              {result.nicetohave?.map((n, i) => <NiceToHaveCard key={i} item={n} />)}
+              {result.nicetohave?.length > 0 ? (
+                <>
+                  <div className="progress-bar" style={{ height: 10, marginBottom: 20 }}>
+                    <div
+                      className="progress-fill"
+                      style={{
+                        width: `${result.nicetohave_total}%`,
+                        background: result.nicetohave_total >= 70
+                          ? 'var(--pass)'
+                          : result.nicetohave_total >= 40
+                          ? 'var(--warn)'
+                          : 'var(--fail)',
+                      }}
+                    />
+                  </div>
+                  {result.nicetohave.map((n, i) => <NiceToHaveCard key={i} item={n} />)}
+                </>
+              ) : (
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic', margin: 0 }}>
+                  No nice-to-have criteria were defined for this role. Scoring was based entirely on mandatory requirements.
+                </p>
+              )}
             </div>
 
             {/* Qualitative Signals — 5 standard dimensions */}
@@ -1426,11 +1891,15 @@ export default function Home({ theme, toggleTheme }) {
                     <button
                       onClick={() => {
                         setShowExportMenu(false);
-                        const date = new Date().toISOString().slice(0,10);
-                        const name = (result.candidate_name || 'Candidate').replace(/\s+/g, '-');
-                        document.title = `${date}_${name}_CV-Analysis`;
-                        window.print();
-                        setTimeout(() => { document.title = 'CV Screening Assistant · Astro'; }, 1000);
+                        const nthItems = result.nicetohave || [];
+                        const nthConfigured = nthItems.length > 0;
+                        const passed = result.mandatory_summary?.passed ?? 0;
+                        const total = result.mandatory_summary?.total ?? 0;
+                        const blockerCount = (result.gap_analysis || []).filter(g => g.severity === 'BLOCKER').length;
+                        const score = nthConfigured
+                          ? (total > 0 ? (passed/total)*60 : 0) + (result.nicetohave_total||0)*(40/100) - blockerCount*50
+                          : (total > 0 ? (passed/total)*100 : 0) - blockerCount*50;
+                        generatePDF(result, parsedJD, nthItems, currentRecord?.screeningStatus || '—', score);
                       }}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 10,
