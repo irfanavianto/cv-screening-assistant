@@ -36,7 +36,9 @@ ANALYSIS FRAMEWORK:
 3. ADDITIONAL SIGNALS — If additionalContext is provided, evaluate each requirement mentioned
    as a separate entry in additional_signals with the same rating/evidence structure.
    If additionalContext is empty or "None", return an empty array for additional_signals.
-4. GAP ANALYSIS — For each missing requirement, assess severity: (blocker / ramp-up / minor)
+4. GAP ANALYSIS — Only for mandatory and nice-to-have requirements that are not met.
+   Do NOT include additional context or qualitative dimensions in gap analysis.
+   For each unmet mandatory or nice-to-have skill, assess severity: (blocker / ramp-up / minor)
 
 SCORING RULES:
 - Mandatory: pass/fail only, no partial credit

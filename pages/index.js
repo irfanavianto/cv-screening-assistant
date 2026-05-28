@@ -749,7 +749,9 @@ export default function Home({ theme, toggleTheme }) {
                 <div>
                   <h2>Additional Context <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '0.8rem' }}>(optional)</span></h2>
                   <p style={{ margin: 0, fontSize: '0.85rem' }}>
-                    Any qualitative nuance for this hire — e.g. "must be comfortable with ambiguity", "experience with local vendors preferred".
+                    Qualitative nuances that are hard to measure — e.g. "comfortable with ambiguity" or
+                    "supply chain exposure preferred." For hard requirements use <strong>Mandatory</strong>;
+                    for measurable preferences use <strong>Nice-to-Have</strong>.
                   </p>
                 </div>
               </div>
@@ -1116,6 +1118,30 @@ export default function Home({ theme, toggleTheme }) {
             {(result._truncated || result._cv_trimmed) && (
               <div className="warning-banner" style={{ marginBottom: 20 }}>
                 ⚠️ CV text was trimmed to fit the analysis limit. For best results, paste only the relevant sections (Summary, Skills, Experience, Education) and remove any unrelated content.
+              </div>
+            )}
+
+            {/* Standout Observation */}
+            {result.standout_observation && (
+              <div style={{
+                display: 'flex',
+                gap: 12,
+                padding: '12px 16px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'var(--primary-light)',
+                border: '1px solid var(--primary)',
+                marginBottom: 20,
+                alignItems: 'flex-start',
+              }}>
+                <span style={{ fontSize: '1.1rem', flexShrink: 0 }}>⭐</span>
+                <div>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>
+                    Standout Observation
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text)', fontStyle: 'italic' }}>
+                    {result.standout_observation}
+                  </p>
+                </div>
               </div>
             )}
 
