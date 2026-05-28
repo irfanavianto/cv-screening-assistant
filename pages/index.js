@@ -1118,6 +1118,30 @@ export default function Home({ theme, toggleTheme }) {
               </div>
             )}
 
+            {/* Standout Observation */}
+            {result.standout_observation && (
+              <div style={{
+                display: 'flex',
+                gap: 12,
+                padding: '12px 16px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'var(--primary-light)',
+                border: '1px solid var(--primary)',
+                marginBottom: 20,
+                alignItems: 'flex-start',
+              }}>
+                <span style={{ fontSize: '1.1rem', flexShrink: 0 }}>⭐</span>
+                <div>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>
+                    Standout Observation
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text)', fontStyle: 'italic' }}>
+                    {result.standout_observation}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Recruiter Summary */}
             <div className="card" style={{ marginBottom: 20, borderLeft: '3px solid var(--primary)' }}>
               <div className="section-header">
@@ -1172,7 +1196,7 @@ export default function Home({ theme, toggleTheme }) {
               {result.nicetohave?.map((n, i) => <NiceToHaveCard key={i} item={n} />)}
             </div>
 
-            {/* Qualitative Signals */}
+            {/* Qualitative Signals — 5 standard dimensions */}
             {result.qualitative_signals?.length > 0 && (
               <div className="card" style={{ marginBottom: 20 }}>
                 <div className="section-header">
@@ -1180,11 +1204,27 @@ export default function Home({ theme, toggleTheme }) {
                   <div>
                     <h2>Qualitative Signals</h2>
                     <p style={{ margin: 0, fontSize: '0.82rem' }}>
-                      Inferred from how the candidate describes their experience — beyond keyword matching.
+                      5 standard dimensions — inferred from how the candidate describes their experience, beyond keyword matching.
                     </p>
                   </div>
                 </div>
                 {result.qualitative_signals.map((q, i) => <QualitativeCard key={i} item={q} />)}
+              </div>
+            )}
+
+            {/* Additional Signals — from HR's additional context */}
+            {result.additional_signals?.length > 0 && (
+              <div className="card" style={{ marginBottom: 20, borderLeft: '3px solid var(--accent)' }}>
+                <div className="section-header">
+                  <div className="section-icon" style={{ background: 'var(--accent-light)', color: 'var(--accent)' }}>💬</div>
+                  <div>
+                    <h2>Additional Requirements</h2>
+                    <p style={{ margin: 0, fontSize: '0.82rem' }}>
+                      Evaluated based on the additional context you provided for this role.
+                    </p>
+                  </div>
+                </div>
+                {result.additional_signals.map((q, i) => <QualitativeCard key={i} item={q} />)}
               </div>
             )}
 
