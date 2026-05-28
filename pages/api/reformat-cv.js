@@ -41,6 +41,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 4000,
+        temperature: 0,
         system: REFORMAT_SYSTEM_PROMPT,
         messages: [{ role: 'user', content: `Reformat this CV text into clean markdown:\n\n${trimmed}` }],
       }),

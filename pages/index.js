@@ -365,6 +365,7 @@ export default function Home({ theme, toggleTheme }) {
   const [cvText, setCvText] = useState('');
   const [cvLoading, setCvLoading] = useState(false);
   const [cvReformatting, setCvReformatting] = useState(false);
+  const [cvReformatDone, setCvReformatDone] = useState(false);
   const [cvPreviewMode, setCvPreviewMode] = useState(false);
   const [cvFileName, setCvFileName] = useState('');
   const [isDragging, setIsDragging] = useState(false);
@@ -423,6 +424,7 @@ export default function Home({ theme, toggleTheme }) {
     const file = e.target.files?.[0];
     if (!file) return;
     setCvFileName(file.name);
+    setCvReformatDone(false);
     setCvLoading(true);
     try {
       // Step 1: Extract raw text from PDF (client-side)
@@ -445,6 +447,7 @@ export default function Home({ theme, toggleTheme }) {
     } finally {
       setCvLoading(false);
       setCvReformatting(false);
+      setCvReformatDone(true);
     }
   }
 
@@ -902,19 +905,50 @@ export default function Home({ theme, toggleTheme }) {
               </div>
             </div>
 
-            {/* Edit mode — textarea */}
+            {/* Edit mode — textarea (three states) */}
             {!cvPreviewMode && (
-              <textarea
-                placeholder="Or paste CV text directly here…"
-                value={cvText}
-                onChange={(e) => setCvText(e.target.value)}
-                style={{
-                  minHeight: 220,
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '0.82rem',
-                  borderColor: cvText.length > CV_CHAR_LIMIT ? 'var(--fail)' : undefined,
-                }}
-              />
+              <>
+                <textarea
+                  placeholder={cvReformatting
+                    ? "Formatting CV with AI — please wait before editing…"
+                    : "Paste CV text or upload PDF above…"
+                  }
+                  value={cvText}
+                  onChange={(e) => {
+                    setCvText(e.target.value);
+                    if (cvReformatDone) setCvReformatDone(false);
+                  }}
+                  disabled={cvReformatting}
+                  style={{
+                    minHeight: 220,
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '0.82rem',
+                    borderColor: cvText.length > CV_CHAR_LIMIT
+                      ? 'var(--fail)'
+                      : cvReformatting
+                      ? 'var(--border)'
+                      : undefined,
+                    background: cvReformatting ? 'var(--bg-subtle)' : undefined,
+                    cursor: cvReformatting ? 'not-allowed' : undefined,
+                    opacity: cvReformatting ? 0.6 : 1,
+                    transition: 'all 0.2s',
+                  }}
+                />
+                {/* State 3 — reformat complete confirmation */}
+                {cvReformatDone && !cvReformatting && (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    marginTop: 6,
+                    fontSize: '0.78rem',
+                    color: 'var(--pass)',
+                    fontWeight: 600,
+                  }}>
+                    ✓ AI formatting complete — review and edit before analyzing
+                  </div>
+                )}
+              </>
             )}
 
             {/* Preview mode — rendered markdown */}
@@ -1340,6 +1374,21 @@ export default function Home({ theme, toggleTheme }) {
                   title={screeningRecords.length === 0 ? 'No records yet' : `Export ${screeningRecords.length} candidate(s)`}
                 >
                   📊 Export Excel ({screeningRecords.length})
+                </button>
+                <button
+                  className="btn btn-danger"
+                  onClick={() => {
+                    if (screeningRecords.length === 0) return;
+                    if (window.confirm(`Clear all ${screeningRecords.length} screening record(s)? This cannot be undone.`)) {
+                      try { localStorage.removeItem('astro_cv_screening_records'); } catch {}
+                      setScreeningRecords([]);
+                    }
+                  }}
+                  disabled={screeningRecords.length === 0}
+                  title="Clear all screening records"
+                  style={{ whiteSpace: 'nowrap' }}
+                >
+                  🗑 Clear Records
                 </button>
               </div>
             </div>

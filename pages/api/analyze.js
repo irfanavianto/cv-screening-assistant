@@ -173,6 +173,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 8000,
+        temperature: 0,
         system: SYSTEM_PROMPT,
         messages: [
           {

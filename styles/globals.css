@@ -366,13 +366,6 @@ label {
     font-size: 11pt;
   }
 
-  .card {
-    box-shadow: none !important;
-    border: 1px solid #ddd !important;
-    break-inside: avoid;
-    margin-bottom: 12pt !important;
-  }
-
   /* Force light colors for print */
   :root {
     --bg: #fff;
@@ -390,9 +383,50 @@ label {
     --warn-bg: #fffbeb;
   }
 
-  /* Print header with candidate info */
   main { padding-top: 0 !important; }
 
-  /* Page breaks */
-  .card { page-break-inside: avoid; }
+  /* ── Page break rules ── */
+
+  /* Cards never break in the middle */
+  .card {
+    box-shadow: none !important;
+    border: 1px solid #ddd !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    margin-bottom: 12pt !important;
+  }
+
+  /* Each major result section starts on a new page */
+  .card + .card {
+    break-before: auto;
+  }
+
+  /* Section headers always stay with their content */
+  .section-header {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  /* Individual mandatory/nice-to-have/gap/signal cards */
+  /* These are divs inside .card — prevent mid-card breaks */
+  .card > div {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Force page break before major sections */
+  /* Recruiter summary, mandatory, nicetohave, qualitative, gap, interview */
+  .card:nth-child(2),  /* mandatory */
+  .card:nth-child(3),  /* nicetohave */
+  .card:nth-child(4),  /* qualitative */
+  .card:nth-child(5),  /* gap */
+  .card:nth-child(6) { /* interview */
+    break-before: page;
+    page-break-before: page;
+  }
+
+  /* Token usage row — keep with content above */
+  .card:last-of-type {
+    break-inside: avoid;
+  }
 }
