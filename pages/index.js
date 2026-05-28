@@ -47,9 +47,12 @@ const CV_CHAR_LIMIT = 6000;
 // Consider     : score ≥ 45
 // Review Gap   : score ≥ 20
 // Not Qualified: score < 20
-function getScreeningStatus(mandatorySummary, niceToHaveTotal, gapAnalysis, niceToHaveItems) {
-  const { passed, total } = mandatorySummary || { passed: 0, total: 0 };
-  const gaps = gapAnalysis || [];
+function getScreeningStatus(mandatoryItems, niceToHaveTotal, gapAnalysis, niceToHaveItems) {
+  // Count from actual arrays — never trust Claude's mandatory_summary.total
+  const mandatory = mandatoryItems || [];
+  const passed    = mandatory.filter(m => m.pass === true).length;
+  const total     = mandatory.length;
+  const gaps      = gapAnalysis || [];
   const nthConfigured = niceToHaveItems && niceToHaveItems.length > 0;
 
   const blockerCount   = gaps.filter(g => g.severity === 'BLOCKER').length;
@@ -57,10 +60,8 @@ function getScreeningStatus(mandatorySummary, niceToHaveTotal, gapAnalysis, nice
 
   let compositeScore;
   if (!nthConfigured) {
-    // NtH not set — score purely from mandatory (max 100)
     compositeScore = total > 0 ? (passed / total) * 100 - blockerPenalty : 0;
   } else {
-    // NtH configured — 60/40 split
     const mandatoryBase   = total > 0 ? (passed / total) * 60 : 0;
     const nthContribution = (niceToHaveTotal || 0) * (40 / 100);
     compositeScore = mandatoryBase + nthContribution - blockerPenalty;
@@ -70,6 +71,13 @@ function getScreeningStatus(mandatorySummary, niceToHaveTotal, gapAnalysis, nice
   if (compositeScore >= 45) return 'Consider';
   if (compositeScore >= 20) return 'Review Gap';
   return 'Not Qualified';
+}
+
+// ─── Helper: compute mandatory counts from actual array ──────────
+function getMandatoryCounts(mandatoryItems) {
+  const items  = mandatoryItems || [];
+  const passed = items.filter(m => m.pass === true).length;
+  return { passed, total: items.length };
 }
 
 // ─── Excel export via SheetJS ────────────────────────────────────
@@ -115,9 +123,10 @@ async function exportToExcel(records) {
 function generatePDF(result, parsedJD, niceToHaveItems, screeningStatus, compositeScore) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const W = 210, H = 297;
-  const ml = 20, mr = 20, mt = 20;
-  const cw = W - ml - mr; // content width
+  const ml = 20, mr = 20, mt = 25;
+  const cw = W - ml - mr;
   let y = mt;
+
   const colors = {
     primary:  [0, 71, 204],
     pass:     [22, 163, 74],
@@ -125,467 +134,518 @@ function generatePDF(result, parsedJD, niceToHaveItems, screeningStatus, composi
     warn:     [217, 119, 6],
     text:     [13, 27, 42],
     muted:    [90, 104, 128],
-    border:   [221, 227, 238],
+    border:   [200, 210, 230],
     bgSubtle: [245, 247, 250],
     accent:   [255, 107, 43],
+    white:    [255, 255, 255],
   };
 
-  // ── helpers ──
-  function setColor(rgb, type = 'text') {
+  // ── Helpers ──────────────────────────────────────────────────────
+  function setC(rgb, type = 'text') {
     if (type === 'text') doc.setTextColor(...rgb);
     else if (type === 'fill') doc.setFillColor(...rgb);
     else if (type === 'draw') doc.setDrawColor(...rgb);
   }
 
-  function checkPageBreak(needed = 10) {
-    if (y + needed > H - 20) {
-      doc.addPage();
-      y = mt;
-    }
+  function checkPage(needed = 12) {
+    if (y + needed > H - 18) { doc.addPage(); y = mt; }
   }
 
-  function drawRect(x, ry, w, h, fillRgb, drawRgb, radius = 2) {
-    if (fillRgb) { setColor(fillRgb, 'fill'); }
-    if (drawRgb) { setColor(drawRgb, 'draw'); doc.setLineWidth(0.3); }
-    const style = fillRgb && drawRgb ? 'FD' : fillRgb ? 'F' : 'D';
-    doc.roundedRect(x, ry, w, h, radius, radius, style);
+  function rect(x, ry, w, h, fill, draw, r = 2) {
+    if (fill) { setC(fill, 'fill'); }
+    if (draw) { setC(draw, 'draw'); doc.setLineWidth(0.25); }
+    const s = fill && draw ? 'FD' : fill ? 'F' : 'D';
+    doc.roundedRect(x, ry, w, h, r, r, s);
   }
 
-  function sectionHeader(icon, title, subtitle) {
-    checkPageBreak(18);
-    setColor(colors.primary, 'fill');
-    doc.setFontSize(9);
-    doc.roundedRect(ml, y, 8, 8, 1, 1, 'F');
-    setColor([255,255,255], 'text');
-    doc.text(icon, ml + 4, y + 5.5, { align: 'center' });
-    setColor(colors.text, 'text');
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'bold');
-    doc.text(title, ml + 11, y + 5.5);
-    y += 10;
-    if (subtitle) {
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      setColor(colors.muted, 'text');
-      doc.text(subtitle, ml + 11, y);
-      y += 5;
-    }
-    y += 3;
-  }
-
-  function wrappedText(text, x, startY, maxW, fontSize = 9, fontStyle = 'normal', colorRgb = colors.text) {
+  // Justified text — distributes words evenly across line width
+  function justifiedText(text, x, ty, maxW, fontSize, fontStyle, color) {
     doc.setFontSize(fontSize);
     doc.setFont('helvetica', fontStyle);
-    setColor(colorRgb, 'text');
-    const lines = doc.splitTextToSize(String(text || ''), maxW);
-    lines.forEach(line => {
-      checkPageBreak(5);
-      doc.text(line, x, startY);
-      startY += fontSize * 0.45;
-      y = Math.max(y, startY);
+    setC(color, 'text');
+    const lines = doc.splitTextToSize(text, maxW);
+    lines.forEach((line, idx) => {
+      const isLast = idx === lines.length - 1;
+      if (isLast || lines.length === 1) {
+        doc.text(line, x, ty);
+      } else {
+        const words = line.trim().split(' ');
+        if (words.length <= 1) { doc.text(line, x, ty); }
+        else {
+          const totalWordW = words.reduce((s, w) => s + doc.getTextWidth(w), 0);
+          const space = (maxW - totalWordW) / (words.length - 1);
+          let cx = x;
+          words.forEach((w, wi) => {
+            doc.text(w, cx, ty);
+            cx += doc.getTextWidth(w) + (wi < words.length - 1 ? space : 0);
+          });
+        }
+      }
+      ty += fontSize * 0.42;
+      y = Math.max(y, ty);
     });
-    return startY;
+    return ty;
+  }
+
+  function sectionLabel(title, subtitle) {
+    checkPage(16);
+    // Solid left bar
+    setC(colors.primary, 'fill');
+    doc.rect(ml, y, 3, subtitle ? 10 : 7, 'F');
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    setC(colors.text, 'text');
+    doc.text(title, ml + 6, y + 5.5);
+    y += 7;
+    if (subtitle) {
+      doc.setFontSize(7.5);
+      doc.setFont('helvetica', 'normal');
+      setC(colors.muted, 'text');
+      doc.text(subtitle, ml + 6, y);
+      y += 5;
+    }
+    y += 4;
   }
 
   function divider() {
-    checkPageBreak(6);
-    setColor(colors.border, 'draw');
+    checkPage(5);
+    setC(colors.border, 'draw');
     doc.setLineWidth(0.2);
     doc.line(ml, y, W - mr, y);
     y += 4;
   }
 
-  // ════════════════════════════════════════════════
-  // HEADER — Candidate name + scores
-  // ════════════════════════════════════════════════
-  drawRect(ml, y, cw, 28, colors.primary, null, 3);
+  function cardText(text, x, startY, maxW, fs, style, color) {
+    doc.setFontSize(fs);
+    doc.setFont('helvetica', style);
+    setC(color, 'text');
+    const lines = doc.splitTextToSize(String(text || ''), maxW);
+    lines.forEach(line => {
+      doc.text(line, x, startY);
+      startY += fs * 0.42;
+      y = Math.max(y, startY);
+    });
+    return startY;
+  }
+
+  // ════════════════════════════════════════════════════════
+  // HEADER
+  // ════════════════════════════════════════════════════════
+  const { passed, total } = getMandatoryCounts(result.mandatory);
+  const nthConfigured = niceToHaveItems && niceToHaveItems.length > 0;
+
+  rect(ml, y, cw, 30, colors.primary, null, 3);
 
   // Candidate label
   doc.setFontSize(7);
   doc.setFont('helvetica', 'normal');
-  setColor([200, 220, 255], 'text');
+  setC([190, 210, 255], 'text');
   doc.text('CANDIDATE', ml + 6, y + 7);
 
-  // Candidate name — large, white, bold
+  // Candidate name
+  doc.setFontSize(17);
+  doc.setFont('helvetica', 'bold');
+  setC(colors.white, 'text');
+  const candidateName = result.candidate_name || 'Unknown Candidate';
+  doc.text(candidateName, ml + 6, y + 19);
+
+  // Right side: two score columns, no overlap
+  const col1x = W - mr - 60;
+  const col2x = W - mr - 28;
+
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'normal');
+  setC([190, 210, 255], 'text');
+  doc.text('MANDATORY', col1x, y + 8, { align: 'center' });
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  setColor([255, 255, 255], 'text');
-  doc.text(result.candidate_name || 'Unknown Candidate', ml + 6, y + 17);
+  setC(colors.white, 'text');
+  doc.text(`${passed}/${total}`, col1x, y + 20, { align: 'center' });
 
-  // Scores on right
-  const passed = result.mandatory_summary?.passed ?? 0;
-  const total = result.mandatory_summary?.total ?? 0;
-  const nthConfigured = niceToHaveItems && niceToHaveItems.length > 0;
-
-  // Mandatory score
-  doc.setFontSize(18);
-  doc.setFont('helvetica', 'bold');
-  setColor([255,255,255], 'text');
-  doc.text(`${passed}/${total}`, W - mr - 52, y + 17);
   doc.setFontSize(7);
   doc.setFont('helvetica', 'normal');
-  setColor([200, 220, 255], 'text');
-  doc.text('MANDATORY', W - mr - 52, y + 23);
-
-  // NtH score
-  doc.setFontSize(18);
+  setC([190, 210, 255], 'text');
+  doc.text('NICE-TO-HAVE', col2x + 8, y + 8, { align: 'center' });
+  doc.setFontSize(nthConfigured ? 14 : 16);
   doc.setFont('helvetica', 'bold');
-  setColor([255,255,255], 'text');
-  doc.text(nthConfigured ? `${result.nicetohave_total}/100` : '—', W - mr - 22, y + 17, { align: 'right' });
+  setC(colors.white, 'text');
+  doc.text(nthConfigured ? `${result.nicetohave_total}/100` : '—', col2x + 8, y + 20, { align: 'center' });
+
+  y += 34;
+
+  // ════════════════════════════════════════════════════════
+  // SCREENING STATUS (top — executive summary principle)
+  // ════════════════════════════════════════════════════════
+  checkPage(20);
+  const statusDef = {
+    'Shortlist':     { fill: [240,253,244], border: colors.pass,  label: colors.pass  },
+    'Consider':      { fill: [255,251,235], border: colors.warn,  label: colors.warn  },
+    'Review Gap':    { fill: [255,237,213], border: colors.accent,label: colors.accent},
+    'Not Qualified': { fill: [255,245,245], border: colors.fail,  label: colors.fail  },
+  };
+  const sd = statusDef[screeningStatus] || statusDef['Consider'];
+  const statusDesc = {
+    'Shortlist':     nthConfigured
+      ? 'Strong mandatory pass rate and nice-to-have score. No critical blockers. Recommended for next stage.'
+      : 'Strong mandatory pass rate. No critical blockers. Recommended for next stage.',
+    'Consider':      'Meets most requirements with manageable gaps. Worth evaluating further.',
+    'Review Gap':    'Has critical blocker or weak mandatory performance. Review before proceeding.',
+    'Not Qualified': 'Multiple critical blockers or insufficient mandatory coverage.',
+  }[screeningStatus] || '';
+
+  const descLines = doc.splitTextToSize(statusDesc, cw - 55);
+  const statusH = Math.max(16, descLines.length * 4 + 8);
+  rect(ml, y, cw, statusH, sd.fill, sd.border, 2);
+
   doc.setFontSize(7);
+  doc.setFont('helvetica', 'bold');
+  setC(colors.muted, 'text');
+  doc.text('SCREENING STATUS', ml + 5, y + 5.5);
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  setC(sd.label, 'text');
+  doc.text(screeningStatus, ml + 5, y + 12);
+
+  doc.setFontSize(8);
   doc.setFont('helvetica', 'normal');
-  setColor([200, 220, 255], 'text');
-  doc.text('NICE-TO-HAVE', W - mr - 22, y + 23, { align: 'right' });
+  setC(colors.muted, 'text');
+  descLines.forEach((line, i) => {
+    doc.text(line, ml + 52, y + 6 + i * 4.2);
+  });
+  y += statusH + 5;
 
-  y += 32;
-
-  // ════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════
   // STANDOUT OBSERVATION
-  // ════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════
   if (result.standout_observation) {
-    checkPageBreak(20);
-    drawRect(ml, y, cw, 4, null, null);
-    const soText = doc.splitTextToSize(`⭐  ${result.standout_observation}`, cw - 12);
-    const soH = soText.length * 4.5 + 8;
-    drawRect(ml, y, cw, soH, [235, 240, 255], colors.primary, 2);
+    checkPage(20);
+    const soLines = doc.splitTextToSize(result.standout_observation, cw - 12);
+    const soH = soLines.length * 4.5 + 12;
+    rect(ml, y, cw, soH, [235,240,255], colors.primary, 2);
     doc.setFontSize(7);
     doc.setFont('helvetica', 'bold');
-    setColor(colors.primary, 'text');
-    doc.text('STANDOUT OBSERVATION', ml + 6, y + 5);
-    doc.setFontSize(8.5);
-    doc.setFont('helvetica', 'italic');
-    setColor(colors.text, 'text');
-    const soLines = doc.splitTextToSize(result.standout_observation, cw - 12);
+    setC(colors.primary, 'text');
+    doc.text('STANDOUT OBSERVATION', ml + 5, y + 5.5);
+    const soStartY = y + 10.5;
     soLines.forEach((line, i) => {
-      doc.text(line, ml + 6, y + 10 + i * 4.5);
+      justifiedText(line, ml + 5, soStartY + i * 4.5, cw - 12, 8.5, 'italic', colors.text);
     });
-    y += soH + 4;
+    y += soH + 5;
   }
 
-  // ════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════
   // RECRUITER SUMMARY
-  // ════════════════════════════════════════════════
-  sectionHeader('💡', 'Recruiter Summary');
+  // ════════════════════════════════════════════════════════
+  sectionLabel('RECRUITER SUMMARY');
   const summaryClean = (result.recruiter_summary || '').replace(/\*\*/g, '').replace(/\*/g, '');
-  const summaryLines = doc.splitTextToSize(summaryClean, cw);
-  summaryLines.forEach(line => {
-    checkPageBreak(5);
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'normal');
-    setColor(colors.text, 'text');
-    doc.text(line, ml, y);
+  const sumLines = doc.splitTextToSize(summaryClean, cw);
+  sumLines.forEach(line => {
+    checkPage(5);
+    justifiedText(line, ml, y, cw, 9, 'normal', colors.text);
     y += 4.5;
   });
   y += 4;
 
-  // ════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════
   // MANDATORY REQUIREMENTS
-  // ════════════════════════════════════════════════
-  const allPass = passed === total;
-  sectionHeader('🔒', `Mandatory Requirements — ${passed}/${total} passed`);
+  // ════════════════════════════════════════════════════════
+  sectionLabel(`MANDATORY REQUIREMENTS — ${passed}/${total} PASSED`);
 
   (result.mandatory || []).forEach(item => {
-    const cardBg = item.pass ? [240, 253, 244] : [255, 245, 245];
+    const cardFill = item.pass ? [240,253,244] : [255,245,245];
     const cardBorder = item.pass ? colors.pass : colors.fail;
-    const evidenceLines = doc.splitTextToSize(item.evidence || '', cw - 18);
-    const cardH = 8 + evidenceLines.length * 4 + 3;
-    checkPageBreak(cardH + 3);
-    drawRect(ml, y, cw, cardH, cardBg, cardBorder, 2);
-    // Icon
-    doc.setFontSize(9);
-    setColor(item.pass ? colors.pass : colors.fail, 'text');
-    doc.text(item.pass ? '✓' : '✗', ml + 4, y + 5.5);
+    const evLines = doc.splitTextToSize(item.evidence || '', cw - 20);
+    const cardH = evLines.length * 4 + 12;
+    checkPage(cardH + 3);
+    rect(ml, y, cw, cardH, cardFill, cardBorder, 2);
+
+    // PASS/FAIL label
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'bold');
+    setC(item.pass ? colors.pass : colors.fail, 'text');
+    doc.text(item.pass ? 'PASS' : 'FAIL', ml + 5, y + 6);
+
     // Skill name
     doc.setFontSize(8.5);
     doc.setFont('helvetica', 'bold');
-    setColor(colors.text, 'text');
-    doc.text(item.skill, ml + 9, y + 5.5);
-    // Type + confidence badge (right)
+    setC(colors.text, 'text');
+    doc.text(item.skill, ml + 16, y + 6);
+
+    // Type + confidence — right aligned
     doc.setFontSize(7);
     doc.setFont('helvetica', 'normal');
-    setColor(colors.muted, 'text');
-    doc.text(`${item.type || ''} · ${item.confidence || ''}`, W - mr - 3, y + 5.5, { align: 'right' });
+    setC(colors.muted, 'text');
+    doc.text(`${item.type || ''} · ${item.confidence || ''}`, W - mr - 3, y + 6, { align: 'right' });
+
     // Evidence
     doc.setFontSize(7.5);
-    doc.setFont('helvetica', 'normal');
-    setColor(colors.muted, 'text');
-    evidenceLines.forEach((line, i) => {
-      doc.text(line, ml + 9, y + 10 + i * 4);
+    setC(colors.muted, 'text');
+    evLines.forEach((line, i) => {
+      doc.text(line, ml + 5, y + 10 + i * 4);
     });
     y += cardH + 2;
   });
   y += 4;
 
-  // ════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════
   // NICE-TO-HAVE
-  // ════════════════════════════════════════════════
-  sectionHeader('⭐', `Nice-to-Have Score — ${nthConfigured ? `${result.nicetohave_total}/100` : 'Not configured'}`);
+  // ════════════════════════════════════════════════════════
+  sectionLabel(`NICE-TO-HAVE SCORE — ${nthConfigured ? `${result.nicetohave_total}/100` : 'NOT CONFIGURED'}`);
 
   if (!nthConfigured) {
     doc.setFontSize(8.5);
     doc.setFont('helvetica', 'italic');
-    setColor(colors.muted, 'text');
+    setC(colors.muted, 'text');
     doc.text('No nice-to-have criteria were defined. Scoring was based entirely on mandatory requirements.', ml, y);
     y += 8;
   } else {
-    // Progress bar
-    checkPageBreak(10);
-    setColor(colors.border, 'fill');
+    checkPage(8);
+    setC(colors.border, 'fill');
     doc.rect(ml, y, cw, 3, 'F');
-    const barColor = result.nicetohave_total >= 70 ? colors.pass : result.nicetohave_total >= 40 ? colors.warn : colors.fail;
-    setColor(barColor, 'fill');
+    const barC = result.nicetohave_total >= 70 ? colors.pass : result.nicetohave_total >= 40 ? colors.warn : colors.fail;
+    setC(barC, 'fill');
     doc.rect(ml, y, cw * (result.nicetohave_total / 100), 3, 'F');
     y += 6;
 
     (result.nicetohave || []).forEach(item => {
-      const evidenceLines = doc.splitTextToSize(item.evidence || '', cw - 18);
-      const cardH = 8 + evidenceLines.length * 4 + 3;
-      checkPageBreak(cardH + 3);
-      drawRect(ml, y, cw, cardH, colors.bgSubtle, colors.border, 2);
+      const evLines = doc.splitTextToSize(item.evidence || '', cw - 16);
+      const cardH = evLines.length * 4 + 12;
+      checkPage(cardH + 3);
+      rect(ml, y, cw, cardH, colors.bgSubtle, colors.border, 2);
       doc.setFontSize(8.5);
       doc.setFont('helvetica', 'bold');
-      setColor(colors.text, 'text');
-      doc.text(item.skill, ml + 5, y + 5.5);
-      // Weight + score right
+      setC(colors.text, 'text');
+      doc.text(item.skill, ml + 5, y + 6);
       doc.setFontSize(7.5);
+      doc.setFont('helvetica', 'bold');
+      setC(item.score > 0 ? colors.pass : colors.muted, 'text');
+      doc.text(`+${item.score}`, W - mr - 3, y + 6, { align: 'right' });
+      doc.setFontSize(7);
       doc.setFont('helvetica', 'normal');
-      setColor(item.score > 0 ? colors.pass : colors.muted, 'text');
-      doc.text(`+${item.score}`, W - mr - 3, y + 5.5, { align: 'right' });
-      setColor(colors.muted, 'text');
-      doc.text(`weight: ${item.weight}  ·  ${item.confidence || ''}`, W - mr - 12, y + 5.5, { align: 'right' });
+      setC(colors.muted, 'text');
+      doc.text(`weight: ${item.weight}  ·  ${item.confidence || ''}`, W - mr - 14, y + 6, { align: 'right' });
       doc.setFontSize(7.5);
-      setColor(colors.muted, 'text');
-      evidenceLines.forEach((line, i) => {
-        doc.text(line, ml + 5, y + 10 + i * 4);
-      });
+      evLines.forEach((line, i) => { doc.text(line, ml + 5, y + 10 + i * 4); });
       y += cardH + 2;
     });
   }
   y += 4;
 
-  // ════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════
   // QUALITATIVE SIGNALS
-  // ════════════════════════════════════════════════
-  sectionHeader('🔍', 'Qualitative Signals', '5 standard dimensions — beyond keyword matching');
-  const ratingColors = { STRONG: colors.pass, MODERATE: colors.warn, WEAK: colors.fail };
+  // ════════════════════════════════════════════════════════
+  sectionLabel('QUALITATIVE SIGNALS', '5 standard dimensions — beyond keyword matching');
+  const ratingC = { STRONG: colors.pass, MODERATE: colors.warn, WEAK: colors.fail };
 
   (result.qualitative_signals || []).forEach(item => {
-    const rc = ratingColors[item.rating] || colors.muted;
-    const evidenceLines = doc.splitTextToSize(item.evidence || '', cw - 14);
-    const cardH = 8 + evidenceLines.length * 4 + 3;
-    checkPageBreak(cardH + 3);
-    drawRect(ml, y, cw, cardH, colors.bgSubtle, colors.border, 2);
-    // Left accent bar
-    setColor(rc, 'fill');
-    doc.rect(ml, y, 2, cardH, 'F');
+    const rc = ratingC[item.rating] || colors.muted;
+    const evLines = doc.splitTextToSize(item.evidence || '', cw - 14);
+    const cardH = evLines.length * 4 + 12;
+    checkPage(cardH + 3);
+    rect(ml, y, cw, cardH, colors.bgSubtle, colors.border, 2);
+    setC(rc, 'fill');
+    doc.rect(ml, y, 2.5, cardH, 'F');
     doc.setFontSize(8.5);
     doc.setFont('helvetica', 'bold');
-    setColor(colors.text, 'text');
-    doc.text(item.dimension, ml + 6, y + 5.5);
+    setC(colors.text, 'text');
+    doc.text(item.dimension, ml + 6, y + 6);
     doc.setFontSize(7.5);
     doc.setFont('helvetica', 'bold');
-    setColor(rc, 'text');
-    doc.text(item.rating, W - mr - 3, y + 5.5, { align: 'right' });
+    setC(rc, 'text');
+    doc.text(item.rating, W - mr - 3, y + 6, { align: 'right' });
     doc.setFontSize(7.5);
     doc.setFont('helvetica', 'normal');
-    setColor(colors.muted, 'text');
-    evidenceLines.forEach((line, i) => {
-      doc.text(line, ml + 6, y + 10 + i * 4);
-    });
+    setC(colors.muted, 'text');
+    evLines.forEach((line, i) => { doc.text(line, ml + 6, y + 10 + i * 4); });
     y += cardH + 2;
   });
   y += 4;
 
-  // ════════════════════════════════════════════════
-  // ADDITIONAL REQUIREMENTS (if any)
-  // ════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════
+  // ADDITIONAL REQUIREMENTS
+  // ════════════════════════════════════════════════════════
   if (result.additional_signals?.length > 0) {
-    sectionHeader('💬', 'Additional Requirements', 'Based on additional context provided for this role');
+    sectionLabel('ADDITIONAL REQUIREMENTS', 'Based on additional context provided');
     result.additional_signals.forEach(item => {
-      const rc = ratingColors[item.rating] || colors.muted;
-      const evidenceLines = doc.splitTextToSize(item.evidence || '', cw - 14);
-      const cardH = 8 + evidenceLines.length * 4 + 3;
-      checkPageBreak(cardH + 3);
-      drawRect(ml, y, cw, cardH, [255, 240, 232], colors.accent, 2);
-      setColor(colors.accent, 'fill');
-      doc.rect(ml, y, 2, cardH, 'F');
+      const rc = ratingC[item.rating] || colors.muted;
+      const evLines = doc.splitTextToSize(item.evidence || '', cw - 14);
+      const cardH = evLines.length * 4 + 12;
+      checkPage(cardH + 3);
+      rect(ml, y, cw, cardH, [255,240,232], colors.accent, 2);
+      setC(colors.accent, 'fill');
+      doc.rect(ml, y, 2.5, cardH, 'F');
       doc.setFontSize(8.5);
       doc.setFont('helvetica', 'bold');
-      setColor(colors.text, 'text');
-      doc.text(item.dimension, ml + 6, y + 5.5);
+      setC(colors.text, 'text');
+      doc.text(item.dimension, ml + 6, y + 6);
       doc.setFontSize(7.5);
       doc.setFont('helvetica', 'bold');
-      setColor(rc, 'text');
-      doc.text(item.rating, W - mr - 3, y + 5.5, { align: 'right' });
+      setC(rc, 'text');
+      doc.text(item.rating, W - mr - 3, y + 6, { align: 'right' });
       doc.setFontSize(7.5);
       doc.setFont('helvetica', 'normal');
-      setColor(colors.muted, 'text');
-      evidenceLines.forEach((line, i) => {
-        doc.text(line, ml + 6, y + 10 + i * 4);
-      });
+      setC(colors.muted, 'text');
+      evLines.forEach((line, i) => { doc.text(line, ml + 6, y + 10 + i * 4); });
       y += cardH + 2;
     });
     y += 4;
   }
 
-  // ════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════
   // GAP ANALYSIS
-  // ════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════
   if (result.gap_analysis?.length > 0) {
-    sectionHeader('⚡', 'Gap Analysis');
-    const severityColors = {
-      'BLOCKER':  { bg: [255, 245, 245], border: colors.fail,  text: colors.fail },
-      'RAMP-UP':  { bg: [255, 251, 235], border: colors.warn,  text: colors.warn },
-      'MINOR':    { bg: [240, 253, 244], border: colors.pass,  text: colors.pass },
+    sectionLabel('GAP ANALYSIS');
+    const sevC = {
+      'BLOCKER': { fill:[255,245,245], border:colors.fail,   text:colors.fail   },
+      'RAMP-UP': { fill:[255,251,235], border:colors.warn,   text:colors.warn   },
+      'MINOR':   { fill:[240,253,244], border:colors.pass,   text:colors.pass   },
     };
     result.gap_analysis.forEach(item => {
-      const sc = severityColors[item.severity] || severityColors['MINOR'];
-      const noteLines = doc.splitTextToSize(item.note || '', cw - 18);
-      const cardH = 8 + noteLines.length * 4 + 3;
-      checkPageBreak(cardH + 3);
-      drawRect(ml, y, cw, cardH, sc.bg, sc.border, 2);
+      const sc = sevC[item.severity] || sevC['MINOR'];
+      const noteLines = doc.splitTextToSize(item.note || '', cw - 20);
+      const cardH = noteLines.length * 4 + 12;
+      checkPage(cardH + 3);
+      rect(ml, y, cw, cardH, sc.fill, sc.border, 2);
       doc.setFontSize(8.5);
       doc.setFont('helvetica', 'bold');
-      setColor(colors.text, 'text');
-      doc.text(item.skill, ml + 5, y + 5.5);
-      // Severity badge
-      doc.setFontSize(7);
+      setC(colors.text, 'text');
+      doc.text(item.skill, ml + 5, y + 6);
+      doc.setFontSize(7.5);
       doc.setFont('helvetica', 'bold');
-      setColor(sc.text, 'text');
-      doc.text(item.severity, W - mr - 3, y + 5.5, { align: 'right' });
+      setC(sc.text, 'text');
+      doc.text(item.severity, W - mr - 3, y + 6, { align: 'right' });
       doc.setFontSize(7.5);
       doc.setFont('helvetica', 'normal');
-      setColor(colors.muted, 'text');
-      noteLines.forEach((line, i) => {
-        doc.text(line, ml + 5, y + 10 + i * 4);
-      });
+      setC(colors.muted, 'text');
+      noteLines.forEach((line, i) => { doc.text(line, ml + 5, y + 10 + i * 4); });
       y += cardH + 2;
     });
     y += 4;
   }
 
-  // ════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════
   // INTERVIEW QUESTIONS
-  // ════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════
   if (result.interview_questions?.length > 0) {
-    sectionHeader('🎤', 'Suggested Interview Questions', 'Based on gaps and areas needing verification');
+    sectionLabel('SUGGESTED INTERVIEW QUESTIONS', 'Based on gaps and areas needing verification');
     result.interview_questions.forEach((q, i) => {
-      const qLines = doc.splitTextToSize(q, cw - 14);
-      const cardH = 6 + qLines.length * 4 + 4;
-      checkPageBreak(cardH + 3);
-      drawRect(ml, y, cw, cardH, colors.bgSubtle, colors.border, 2);
-      // Number circle
-      setColor(colors.primary, 'fill');
-      doc.circle(ml + 7, y + cardH/2, 3.5, 'F');
+      const qLines = doc.splitTextToSize(q, cw - 16);
+      const cardH = qLines.length * 4.2 + 10;
+      checkPage(cardH + 3);
+      rect(ml, y, cw, cardH, colors.bgSubtle, colors.border, 2);
+
+      // Number circle — properly centered
+      const circleX = ml + 7;
+      const circleY = y + cardH / 2;
+      setC(colors.primary, 'fill');
+      doc.circle(circleX, circleY, 3.8, 'F');
       doc.setFontSize(7.5);
       doc.setFont('helvetica', 'bold');
-      setColor([255,255,255], 'text');
-      doc.text(String(i + 1), ml + 7, y + cardH/2 + 2.5, { align: 'center' });
+      setC(colors.white, 'text');
+      // Vertically center the number in the circle
+      doc.text(String(i + 1), circleX, circleY + 2.5, { align: 'center' });
+
       doc.setFontSize(8.5);
       doc.setFont('helvetica', 'normal');
-      setColor(colors.text, 'text');
+      setC(colors.text, 'text');
       qLines.forEach((line, j) => {
-        doc.text(line, ml + 13, y + 6 + j * 4);
+        doc.text(line, ml + 14, y + 5.5 + j * 4.2);
       });
       y += cardH + 2;
     });
     y += 4;
   }
 
-  // ════════════════════════════════════════════════
-  // SCREENING STATUS + TOKEN USAGE
-  // ════════════════════════════════════════════════
-  checkPageBreak(40);
-  divider();
-
-  // Screening status box
-  const statusColors = {
-    'Shortlist':     { bg: [240, 253, 244], border: colors.pass,  dot: colors.pass },
-    'Consider':      { bg: [255, 251, 235], border: colors.warn,  dot: colors.warn },
-    'Review Gap':    { bg: [255, 237, 213], border: colors.accent, dot: colors.accent },
-    'Not Qualified': { bg: [255, 245, 245], border: colors.fail,  dot: colors.fail },
-  };
-  const sc2 = statusColors[screeningStatus] || statusColors['Consider'];
-  drawRect(ml, y, cw * 0.48, 22, sc2.bg, sc2.border, 2);
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'bold');
-  setColor(colors.muted, 'text');
-  doc.text('SCREENING STATUS', ml + 5, y + 6);
-  setColor(sc2.dot, 'fill');
-  doc.circle(ml + 8, y + 14, 3, 'F');
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'bold');
-  setColor(colors.text, 'text');
-  doc.text(screeningStatus, ml + 13, y + 16);
-
-  // Token usage box
+  // ════════════════════════════════════════════════════════
+  // TOKEN USAGE
+  // ════════════════════════════════════════════════════════
   if (result._usage) {
-    drawRect(ml + cw * 0.52, y, cw * 0.48, 22, colors.bgSubtle, colors.border, 2);
-    const ux = ml + cw * 0.52 + 5;
+    checkPage(18);
+    divider();
+    rect(ml, y, cw, 16, colors.bgSubtle, colors.border, 2);
     doc.setFontSize(7);
     doc.setFont('helvetica', 'bold');
-    setColor(colors.muted, 'text');
-    doc.text('TOKEN USAGE & COST', ux, y + 6);
+    setC(colors.muted, 'text');
+    doc.text('TOKEN USAGE & COST', ml + 5, y + 5.5);
     doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
-    setColor(colors.text, 'text');
-    doc.text(`${result._usage.input_tokens.toLocaleString()} in · ${result._usage.output_tokens.toLocaleString()} out · ${result._usage.total_tokens.toLocaleString()} total`, ux, y + 12);
-    doc.setFontSize(8);
+    setC(colors.text, 'text');
+    doc.text(`${result._usage.input_tokens.toLocaleString()} in  ·  ${result._usage.output_tokens.toLocaleString()} out  ·  ${result._usage.total_tokens.toLocaleString()} total tokens`, ml + 5, y + 10.5);
+    doc.setFontSize(7.5);
     doc.setFont('helvetica', 'bold');
-    setColor(colors.primary, 'text');
-    doc.text(`Haiku: $${result._usage.cost_usd.toFixed(4)}`, ux, y + 18);
+    setC(colors.primary, 'text');
+    doc.text(`Actual (Haiku): $${result._usage.cost_usd.toFixed(4)}`, W - mr - 5, y + 6.5, { align: 'right' });
     const sonnetCost = ((result._usage.input_tokens / 1e6 * 3) + (result._usage.output_tokens / 1e6 * 15)).toFixed(4);
-    setColor(colors.muted, 'text');
+    doc.setFontSize(7.5);
     doc.setFont('helvetica', 'normal');
-    doc.text(`Est. Sonnet: $${sonnetCost}`, ux + 35, y + 18);
+    setC(colors.muted, 'text');
+    doc.text(`Est. (Sonnet): $${sonnetCost}`, W - mr - 5, y + 11.5, { align: 'right' });
+    y += 20;
+
+    // Score footnote
+    const { passed: fp, total: ft } = getMandatoryCounts(result.mandatory);
+    const nthLabel = niceToHaveItems?.length > 0 ? `NtH x 40/100` : 'NtH not configured';
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'normal');
+    setC(colors.muted, 'text');
+    doc.text(`Score: mandatory (${fp}/${ft}) x ${niceToHaveItems?.length > 0 ? 60 : 100} + ${nthLabel} - blockers x 50 = ${Math.round(compositeScore)} pts`, ml, y);
+    y += 5;
   }
-  y += 26;
 
-  // Score formula footnote
-  const nthLabel = niceToHaveItems?.length > 0 ? `NtH score × 40/100` : 'NtH not configured';
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'normal');
-  setColor(colors.muted, 'text');
-  doc.text(`Score basis: mandatory (${result.mandatory_summary?.passed}/${result.mandatory_summary?.total}) × ${niceToHaveItems?.length > 0 ? 60 : 100} + ${nthLabel} − blockers × 50 = ${Math.round(compositeScore)} pts`, ml, y);
-  y += 5;
-
-  // ════════════════════════════════════════════════
-  // FOOTER on every page
-  // ════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════
+  // WATERMARK + HEADER/FOOTER on every page
+  // ════════════════════════════════════════════════════════
   const pageCount = doc.getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
-    doc.setFontSize(7);
+
+    // Watermark — subtle diagonal text
+    doc.setFontSize(28);
     doc.setFont('helvetica', 'normal');
-    setColor(colors.muted, 'text');
-    doc.text('CV Screening Assistant · Astro Technologies Indonesia · AI outputs are recommendations, not decisions.', ml, H - 10);
-    doc.text(`${i} / ${pageCount}`, W - mr, H - 10, { align: 'right' });
-    // Top border line on every page
-    setColor(colors.primary, 'draw');
-    doc.setLineWidth(0.5);
-    doc.line(ml, 12, W - mr, 12);
+    doc.setTextColor(230, 235, 245);
+    doc.text('CONFIDENTIAL', W / 2, H / 2, {
+      align: 'center',
+      angle: 45,
+    });
+
+    // Header line
+    setC(colors.primary, 'draw');
+    doc.setLineWidth(0.4);
+    doc.line(ml, 14, W - mr, 14);
     doc.setFontSize(7.5);
     doc.setFont('helvetica', 'bold');
-    setColor(colors.primary, 'text');
-    doc.text('CV Screening Assistant · Astro Internal Tool', ml, 10);
-    // Date + candidate on header right
+    setC(colors.primary, 'text');
+    doc.text('CV Screening Assistant', ml, 11);
     doc.setFont('helvetica', 'normal');
-    setColor(colors.muted, 'text');
+    setC(colors.muted, 'text');
+    doc.text('by M Irfan Avianto  ·  Astro Personal AI Challenge', ml + 42, 11);
     const date = new Date().toISOString().slice(0,10);
-    doc.text(`${date} · ${result.candidate_name || 'Candidate'}`, W - mr, 10, { align: 'right' });
+    doc.text(`${date}  ·  ${result.candidate_name || 'Candidate'}`, W - mr, 11, { align: 'right' });
+
+    // Footer line
+    setC(colors.border, 'draw');
+    doc.setLineWidth(0.2);
+    doc.line(ml, H - 12, W - mr, H - 12);
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'normal');
+    setC(colors.muted, 'text');
+    doc.text('AI outputs are recommendations, not decisions. For internal use only.', ml, H - 8);
+    doc.text(`${i} / ${pageCount}`, W - mr, H - 8, { align: 'right' });
   }
 
   // Save
-  const date = new Date().toISOString().slice(0,10);
-  const name = (result.candidate_name || 'Candidate').replace(/\s+/g, '-');
-  doc.save(`${date}_${name}_CV-Analysis.pdf`);
+  const dateStr = new Date().toISOString().slice(0,10);
+  const nameStr = (result.candidate_name || 'Candidate').replace(/\s+/g, '-');
+  doc.save(`${dateStr}_${nameStr}_CV-Analysis.pdf`);
 }
 
 // ─── localStorage helpers ─────────────────────────────────────────
 const LS_KEY = 'astro_cv_screening_records';
 
 function saveRecord(result, jobTitle) {
-  const status = getScreeningStatus(result.mandatory_summary, result.nicetohave_total, result.gap_analysis, result.nicetohave);
+  const { passed: mPassed, total: mTotal } = getMandatoryCounts(result.mandatory);
+  const status = getScreeningStatus(result.mandatory, result.nicetohave_total, result.gap_analysis, result.nicetohave);
   const topGap = result.gap_analysis?.find(g => g.severity === 'BLOCKER')?.skill
     || result.gap_analysis?.find(g => g.severity === 'RAMP-UP')?.skill
     || result.gap_analysis?.[0]?.skill
@@ -595,8 +655,8 @@ function saveRecord(result, jobTitle) {
     date:             new Date().toISOString().slice(0, 10),
     candidateName:    result.candidate_name || 'Unknown',
     role:             jobTitle || 'Unknown Role',
-    mandatoryPassed:  result.mandatory_summary?.passed ?? 0,
-    mandatoryTotal:   result.mandatory_summary?.total ?? 0,
+    mandatoryPassed:  mPassed,
+    mandatoryTotal:   mTotal,
     nthScore:         result.nicetohave_total ?? 0,
     topGap,
     screeningStatus:  status,
@@ -1572,7 +1632,7 @@ export default function Home({ theme, toggleTheme }) {
                 <div style={{ display: 'flex', gap: 24 }}>
                   <div style={{ textAlign: 'center' }}>
                     <div style={{ fontSize: '1.8rem', fontWeight: 800 }}>
-                      {result.mandatory_summary?.passed}/{result.mandatory_summary?.total}
+                      {(result.mandatory||[]).filter(m=>m.pass).length}/{(result.mandatory||[]).length}
                     </div>
                     <div style={{ fontSize: '0.72rem', opacity: 0.7 }}>MANDATORY</div>
                   </div>
@@ -1588,6 +1648,59 @@ export default function Home({ theme, toggleTheme }) {
                 </div>
               </div>
             </div>
+
+            {/* Screening Status badge */}
+            {currentRecord && (
+              <div style={{
+                padding: '14px 18px',
+                borderRadius: 'var(--radius-sm)',
+                marginBottom: 20,
+                background: {
+                  'Shortlist': 'var(--pass-bg)',
+                  'Consider': 'var(--warn-bg)',
+                  'Review Gap': 'var(--accent-light)',
+                  'Not Qualified': 'var(--fail-bg)',
+                }[currentRecord.screeningStatus] || 'var(--bg-subtle)',
+                border: `1px solid ${{
+                  'Shortlist': 'var(--pass)',
+                  'Consider': 'var(--warn)',
+                  'Review Gap': 'var(--accent)',
+                  'Not Qualified': 'var(--fail)',
+                }[currentRecord.screeningStatus] || 'var(--border)'}`,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}>
+                <div>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: 3 }}>
+                    Screening Status
+                  </div>
+                  <div style={{ fontWeight: 800, fontSize: '1.1rem' }}>
+                    {{
+                      'Shortlist': '🟢',
+                      'Consider': '🟡',
+                      'Review Gap': '🟠',
+                      'Not Qualified': '🔴',
+                    }[currentRecord.screeningStatus]} {currentRecord.screeningStatus}
+                  </div>
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'right', maxWidth: 260 }}>
+                  {(() => {
+                    const nthSet = result.nicetohave?.length > 0;
+                    const copy = {
+                      'Shortlist':     nthSet
+                        ? 'Strong mandatory pass rate and high nice-to-have score. No critical blockers. Recommended for next stage.'
+                        : 'Strong mandatory pass rate. No critical blockers. Recommended for next stage.',
+                      'Consider':      'Meets most requirements with manageable gaps. Worth evaluating further — check gap analysis for details.',
+                      'Review Gap':    'Has at least one critical blocker or weak performance across mandatory requirements. Review before proceeding.',
+                      'Not Qualified': 'Multiple critical blockers or insufficient mandatory coverage for this role.',
+                    };
+                    return copy[currentRecord.screeningStatus] || '';
+                  })()}
+                </div>
+              </div>
+            )}
+
 
             {/* CV trimmed warning */}
             {(result._truncated || result._cv_trimmed) && (
@@ -1613,16 +1726,11 @@ export default function Home({ theme, toggleTheme }) {
                 <div className="section-icon">🔒</div>
                 <h2>
                   Mandatory Requirements —{' '}
-                  <span
-                    style={{
-                      color:
-                        result.mandatory_summary?.passed === result.mandatory_summary?.total
-                          ? 'var(--pass)'
-                          : 'var(--fail)',
-                    }}
-                  >
-                    {result.mandatory_summary?.passed}/{result.mandatory_summary?.total} passed
-                  </span>
+                  {(() => {
+                    const p = (result.mandatory||[]).filter(m=>m.pass).length;
+                    const t = (result.mandatory||[]).length;
+                    return <span style={{ color: p === t ? 'var(--pass)' : 'var(--fail)' }}>{p}/{t} passed</span>;
+                  })()}
                 </h2>
               </div>
               {result.mandatory?.map((m, i) => <MandatoryCard key={i} item={m} />)}
@@ -1791,52 +1899,6 @@ export default function Home({ theme, toggleTheme }) {
               </div>
             )}
 
-            {/* Screening Status badge */}
-            {currentRecord && (
-              <div style={{
-                padding: '14px 18px',
-                borderRadius: 'var(--radius-sm)',
-                marginBottom: 20,
-                background: {
-                  'Shortlist': 'var(--pass-bg)',
-                  'Consider': 'var(--warn-bg)',
-                  'Review Gap': 'var(--accent-light)',
-                  'Not Qualified': 'var(--fail-bg)',
-                }[currentRecord.screeningStatus] || 'var(--bg-subtle)',
-                border: `1px solid ${{
-                  'Shortlist': 'var(--pass)',
-                  'Consider': 'var(--warn)',
-                  'Review Gap': 'var(--accent)',
-                  'Not Qualified': 'var(--fail)',
-                }[currentRecord.screeningStatus] || 'var(--border)'}`,
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}>
-                <div>
-                  <div style={{ fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: 3 }}>
-                    Screening Status
-                  </div>
-                  <div style={{ fontWeight: 800, fontSize: '1.1rem' }}>
-                    {{
-                      'Shortlist': '🟢',
-                      'Consider': '🟡',
-                      'Review Gap': '🟠',
-                      'Not Qualified': '🔴',
-                    }[currentRecord.screeningStatus]} {currentRecord.screeningStatus}
-                  </div>
-                </div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'right', maxWidth: 260 }}>
-                  {{
-                    'Shortlist':     'Strong mandatory pass rate and high nice-to-have score. No critical blockers. Recommended for next stage.',
-                    'Consider':      'Meets most requirements with manageable gaps. Worth evaluating further — check gap analysis for details.',
-                    'Review Gap':    'Has at least one critical blocker or weak performance across both mandatory and nice-to-have. Review before proceeding.',
-                    'Not Qualified': 'Multiple critical blockers or insufficient mandatory coverage for this role.',
-                  }[currentRecord.screeningStatus]}
-                </div>
-              </div>
-            )}
-
             {/* Export + Navigation actions */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
               <div style={{ display: 'flex', gap: 8 }}>
@@ -1893,8 +1955,7 @@ export default function Home({ theme, toggleTheme }) {
                         setShowExportMenu(false);
                         const nthItems = result.nicetohave || [];
                         const nthConfigured = nthItems.length > 0;
-                        const passed = result.mandatory_summary?.passed ?? 0;
-                        const total = result.mandatory_summary?.total ?? 0;
+                        const { passed, total } = getMandatoryCounts(result.mandatory);
                         const blockerCount = (result.gap_analysis || []).filter(g => g.severity === 'BLOCKER').length;
                         const score = nthConfigured
                           ? (total > 0 ? (passed/total)*60 : 0) + (result.nicetohave_total||0)*(40/100) - blockerCount*50
