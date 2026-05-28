@@ -377,6 +377,7 @@ export default function Home({ theme, toggleTheme }) {
   const [analyzeError, setAnalyzeError] = useState('');
   const [screeningRecords, setScreeningRecords] = useState(() => loadRecords());
   const [currentRecord, setCurrentRecord] = useState(null);
+  const [showExportMenu, setShowExportMenu] = useState(false);
 
   // ── JD parsing ──
   async function handleExtractCriteria() {
@@ -1118,30 +1119,6 @@ export default function Home({ theme, toggleTheme }) {
               </div>
             )}
 
-            {/* Standout Observation */}
-            {result.standout_observation && (
-              <div style={{
-                display: 'flex',
-                gap: 12,
-                padding: '12px 16px',
-                borderRadius: 'var(--radius-sm)',
-                background: 'var(--primary-light)',
-                border: '1px solid var(--primary)',
-                marginBottom: 20,
-                alignItems: 'flex-start',
-              }}>
-                <span style={{ fontSize: '1.1rem', flexShrink: 0 }}>⭐</span>
-                <div>
-                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>
-                    Standout Observation
-                  </div>
-                  <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text)', fontStyle: 'italic' }}>
-                    {result.standout_observation}
-                  </p>
-                </div>
-              </div>
-            )}
-
             {/* Recruiter Summary */}
             <div className="card" style={{ marginBottom: 20, borderLeft: '3px solid var(--primary)' }}>
               <div className="section-header">
@@ -1372,7 +1349,7 @@ export default function Home({ theme, toggleTheme }) {
             {/* Export + Navigation actions */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
               <div style={{ display: 'flex', gap: 8 }}>
-                <button className="btn btn-secondary" onClick={() => { setStep(3); setResult(null); }}>
+                <button className="btn btn-secondary" onClick={() => { setStep(3); setResult(null); setShowExportMenu(false); }}>
                   ← Screen Another CV
                 </button>
                 <button
@@ -1388,50 +1365,139 @@ export default function Home({ theme, toggleTheme }) {
                     setCvText('');
                     setCvFileName('');
                     setCurrentRecord(null);
+                    setShowExportMenu(false);
                   }}
                 >
                   🔄 Start Over
                 </button>
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => {
-                    // Set document title for PDF filename
-                    const date = new Date().toISOString().slice(0,10);
-                    const name = (result.candidate_name || 'Candidate').replace(/\s+/g, '-');
-                    document.title = `${date}_${name}_CV-Analysis`;
-                    window.print();
-                    setTimeout(() => { document.title = 'CV Screening Assistant · Astro'; }, 1000);
-                  }}
-                >
-                  📄 Export PDF
-                </button>
+
+              {/* Export dropdown */}
+              <div style={{ position: 'relative' }}>
                 <button
                   className="btn btn-primary"
-                  onClick={() => exportToExcel(screeningRecords)}
-                  disabled={screeningRecords.length === 0}
-                  title={screeningRecords.length === 0 ? 'No records yet' : `Export ${screeningRecords.length} candidate(s)`}
+                  onClick={() => setShowExportMenu(v => !v)}
                 >
-                  📊 Export Excel ({screeningRecords.length})
+                  ⬇ Export{screeningRecords.length > 0 ? ` (${screeningRecords.length})` : ''} ▾
                 </button>
-                <button
-                  className="btn btn-danger"
-                  onClick={() => {
-                    if (screeningRecords.length === 0) return;
-                    if (window.confirm(`Clear all ${screeningRecords.length} screening record(s)? This cannot be undone.`)) {
-                      try { localStorage.removeItem('astro_cv_screening_records'); } catch {}
-                      setScreeningRecords([]);
-                    }
-                  }}
-                  disabled={screeningRecords.length === 0}
-                  title="Clear all screening records"
-                  style={{ whiteSpace: 'nowrap' }}
-                >
-                  🗑 Clear Records
-                </button>
+
+                {showExportMenu && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      bottom: '110%',
+                      right: 0,
+                      background: 'var(--bg-card)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius-sm)',
+                      boxShadow: 'var(--shadow-lg)',
+                      minWidth: 220,
+                      zIndex: 50,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    {/* Export PDF */}
+                    <button
+                      onClick={() => {
+                        setShowExportMenu(false);
+                        const date = new Date().toISOString().slice(0,10);
+                        const name = (result.candidate_name || 'Candidate').replace(/\s+/g, '-');
+                        document.title = `${date}_${name}_CV-Analysis`;
+                        window.print();
+                        setTimeout(() => { document.title = 'CV Screening Assistant · Astro'; }, 1000);
+                      }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        width: '100%', padding: '10px 16px',
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        fontSize: '0.88rem', color: 'var(--text)', textAlign: 'left',
+                        borderBottom: '1px solid var(--border)',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-subtle)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                    >
+                      <span>📄</span>
+                      <div>
+                        <div style={{ fontWeight: 600 }}>Export PDF</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Full analysis for this candidate</div>
+                      </div>
+                    </button>
+
+                    {/* Export Excel */}
+                    <button
+                      onClick={() => { setShowExportMenu(false); exportToExcel(screeningRecords); }}
+                      disabled={screeningRecords.length === 0}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        width: '100%', padding: '10px 16px',
+                        background: 'none', border: 'none',
+                        cursor: screeningRecords.length === 0 ? 'not-allowed' : 'pointer',
+                        fontSize: '0.88rem', color: screeningRecords.length === 0 ? 'var(--text-faint)' : 'var(--text)',
+                        textAlign: 'left',
+                        borderBottom: '1px solid var(--border)',
+                        opacity: screeningRecords.length === 0 ? 0.5 : 1,
+                      }}
+                      onMouseEnter={e => { if (screeningRecords.length > 0) e.currentTarget.style.background = 'var(--bg-subtle)'; }}
+                      onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                    >
+                      <span>📊</span>
+                      <div>
+                        <div style={{ fontWeight: 600 }}>Export Excel {screeningRecords.length > 0 ? `(${screeningRecords.length})` : ''}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>All screened candidates</div>
+                      </div>
+                    </button>
+
+                    {/* Reset & Save Current */}
+                    <button
+                      onClick={() => {
+                        setShowExportMenu(false);
+                        const msg = screeningRecords.length > 0
+                          ? `Reset all ${screeningRecords.length} record(s) and save only this candidate? This cannot be undone.`
+                          : 'No previous records to reset.';
+                        if (screeningRecords.length === 0) return;
+                        if (window.confirm(msg)) {
+                          try { localStorage.removeItem('astro_cv_screening_records'); } catch {}
+                          if (currentRecord) {
+                            const fresh = [currentRecord];
+                            try { localStorage.setItem('astro_cv_screening_records', JSON.stringify(fresh)); } catch {}
+                            setScreeningRecords(fresh);
+                          } else {
+                            setScreeningRecords([]);
+                          }
+                        }
+                      }}
+                      disabled={screeningRecords.length === 0}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        width: '100%', padding: '10px 16px',
+                        background: 'none', border: 'none',
+                        cursor: screeningRecords.length === 0 ? 'not-allowed' : 'pointer',
+                        fontSize: '0.88rem',
+                        color: screeningRecords.length === 0 ? 'var(--text-faint)' : 'var(--fail)',
+                        textAlign: 'left',
+                        opacity: screeningRecords.length === 0 ? 0.5 : 1,
+                      }}
+                      onMouseEnter={e => { if (screeningRecords.length > 0) e.currentTarget.style.background = 'var(--fail-bg)'; }}
+                      onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                    >
+                      <span>🔄</span>
+                      <div>
+                        <div style={{ fontWeight: 600 }}>Reset & Save Current</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Clear history, keep this result (→ 1)</div>
+                      </div>
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
+
+            {/* Close export menu on outside click */}
+            {showExportMenu && (
+              <div
+                style={{ position: 'fixed', inset: 0, zIndex: 40 }}
+                onClick={() => setShowExportMenu(false)}
+              />
+            )}
           </div>
         )}
       </main>
