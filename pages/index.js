@@ -733,7 +733,7 @@ function NiceToHaveCard({ item }) {
       <div className="flex justify-between items-center" style={{ marginBottom: 6 }}>
         <div className="flex items-center gap-2">
           <strong style={{ fontSize: '0.9rem' }}>{item.skill}</strong>
-          <span
+          {/* <span
             style={{
               fontSize: '0.7rem',
               padding: '1px 7px',
@@ -744,7 +744,7 @@ function NiceToHaveCard({ item }) {
             }}
           >
             {item.type}
-          </span>
+          </span> */}
         </div>
         <div className="flex items-center gap-3">
           {/* <ConfidenceBadge level={item.confidence} />
@@ -754,7 +754,20 @@ function NiceToHaveCard({ item }) {
           <span style={{ fontWeight: 700, color: item.score > 0 ? 'var(--pass)' : 'var(--text-faint)' }}>
             +{item.score}
           </span> */}
-          <span style={{ fontSize: '0.72rem', padding: '1px 7px', borderRadius: 99, background: 'var(--bg-subtle)', color: 'var(--text-muted)' }}>
+          
+          {/* <span style={{ fontSize: '0.72rem', padding: '1px 7px', borderRadius: 99, background: 'var(--bg-subtle)', color: 'var(--text-muted)' }}>
+            {item.type}
+          </span> */}
+          <span
+            style={{
+              fontSize: '0.7rem',
+              padding: '1px 7px',
+              borderRadius: 99,
+              background: 'var(--bg-card)',
+              color: 'var(--text-muted)',
+              border: '1px solid var(--border)',
+            }}
+          >
             {item.type}
           </span>
           <ConfidenceBadge level={item.confidence} />
