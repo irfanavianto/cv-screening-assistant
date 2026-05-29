@@ -747,11 +747,18 @@ function NiceToHaveCard({ item }) {
           </span>
         </div>
         <div className="flex items-center gap-3">
-          <ConfidenceBadge level={item.confidence} />
-          {/* <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+          {/* <ConfidenceBadge level={item.confidence} />
+          <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
             weight: <strong style={{ color: 'var(--text)' }}>{item.weight}</strong>
-          </span> */}
+          </span>
           <span style={{ fontWeight: 700, color: item.score > 0 ? 'var(--pass)' : 'var(--text-faint)' }}>
+            +{item.score}
+          </span> */}
+          <span style={{ fontSize: '0.72rem', padding: '1px 7px', borderRadius: 99, background: 'var(--bg-subtle)', color: 'var(--text-muted)' }}>
+            {item.type}
+          </span>
+          <ConfidenceBadge level={item.confidence} />
+          <span style={{ fontWeight: 700, color: item.score > 0 ? 'var(--pass)' : 'var(--text-faint)', marginLeft: 4 }}>
             +{item.score}
           </span>
         </div>
