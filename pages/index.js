@@ -122,181 +122,171 @@ async function exportToExcel(records) {
 // ─── jsPDF export ────────────────────────────────────────────────
 function generatePDF(result, parsedJD, niceToHaveItems, screeningStatus, compositeScore) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-  const W = 210, H = 297;
-  const ml = 18, mr = 18, mt = 22;
-  const cw = W - ml - mr;
-  let y = mt;
+  const PW = 210, PH = 297;
+  const ML = 18, MR = 18, MT = 22, MB = 18;
+  const CW = PW - ML - MR;
+  const BOTTOM = PH - MB - 8;
+  let y = MT;
 
-  // Navy blue matching Hackathon logo visual
   const C = {
-    primary:  [26, 35, 126],   // #1A237E — deep navy
-    pass:     [22, 163, 74],
-    fail:     [220, 38, 38],
-    warn:     [217, 119, 6],
-    text:     [13, 27, 42],
-    muted:    [90, 104, 128],
-    faint:    [160, 174, 192],
-    border:   [210, 218, 232],
-    subtle:   [246, 248, 252],
-    accent:   [255, 107, 43],
-    white:    [255, 255, 255],
-    headerBg: [26, 35, 126],
+    primary: [26, 35, 126], pass: [22, 163, 74], fail: [220, 38, 38],
+    warn: [217, 119, 6], text: [13, 27, 42], muted: [90, 104, 128],
+    border: [210, 218, 232], subtle: [246, 248, 252],
+    accent: [255, 107, 43], white: [255, 255, 255],
   };
 
-  const LH = 0.40; // line height multiplier — readable but compact
-
-  // ── Core helpers ──────────────────────────────────────────────────
-  function sc(rgb, type = 'text') {
-    if (type === 'text') doc.setTextColor(...rgb);
-    else if (type === 'fill') doc.setFillColor(...rgb);
-    else if (type === 'draw') doc.setDrawColor(...rgb);
+  // ── Sanitize text ──────────────────────────────────────────────
+  function san(s) {
+    return (s || '')
+      .replace(/\*\*/g, '').replace(/\*/g, '')
+      .replace(/→|>/g, '->').replace(/–|—/g, '-')
+      .replace(/[""]/g, '"').replace(/['']/g, "'")
+      .replace(/[^\x00-\x7E]/g, '');
   }
 
-  function checkPage(needed = 14) {
-    if (y + needed > H - 16) { doc.addPage(); y = mt; }
+  // ── Set color helper ──────────────────────────────────────────
+  function sc(rgb, t) {
+    if (t === 'f') doc.setFillColor(...rgb);
+    else if (t === 'd') { doc.setDrawColor(...rgb); doc.setLineWidth(0.25); }
+    else doc.setTextColor(...rgb);
   }
 
-  function rr(x, ry, w, h, fill, draw, r = 2) {
-    if (fill) sc(fill, 'fill');
-    if (draw) { sc(draw, 'draw'); doc.setLineWidth(0.25); }
-    doc.roundedRect(x, ry, w, h, r, r, fill && draw ? 'FD' : fill ? 'F' : 'D');
-  }
-
-  // Justified text renderer — last line is left-aligned
-  function jText(text, x, startY, maxW, fs, style, color) {
+  // ── Measure text height accurately ───────────────────────────
+  function measureH(text, maxW, fs) {
     doc.setFontSize(fs);
-    doc.setFont('helvetica', style);
-    sc(color, 'text');
-    const lines = doc.splitTextToSize(String(text || ''), maxW);
-    let ty = startY;
-    lines.forEach((line, idx) => {
-      const isLast = idx === lines.length - 1;
-      if (isLast || lines.length === 1) {
-        doc.text(line, x, ty);
-      } else {
-        const words = line.trim().split(' ');
-        if (words.length <= 1) {
-          doc.text(line, x, ty);
-        } else {
-          const totalW = words.reduce((s, w) => s + doc.getTextWidth(w), 0);
-          const sp = (maxW - totalW) / (words.length - 1);
-          let cx = x;
-          words.forEach((w, wi) => {
-            doc.text(w, cx, ty);
-            cx += doc.getTextWidth(w) + (wi < words.length - 1 ? sp : 0);
-          });
-        }
-      }
-      ty += fs * LH + 1.2;
-      y = Math.max(y, ty);
-    });
-    return ty;
+    const lines = doc.splitTextToSize(san(text), maxW);
+    return lines.length * (fs * 0.42 + 1.0);
   }
 
-  // Regular text (left-aligned, no justify)
-  function lText(text, x, startY, maxW, fs, style, color) {
-    doc.setFontSize(fs);
-    doc.setFont('helvetica', style);
-    sc(color, 'text');
-    const lines = doc.splitTextToSize(String(text || ''), maxW);
-    let ty = startY;
-    lines.forEach(line => {
-      doc.text(line, x, ty);
-      ty += fs * LH + 1.2;
-      y = Math.max(y, ty);
-    });
-    return ty;
+  // ── Check page break — keeps title+content together ──────────
+  function needPage(h) {
+    if (y + h > BOTTOM) { doc.addPage(); y = MT; }
   }
 
-  // Section header with left bar + title + optional subtitle on separate line
+  // ── Draw rounded rect ─────────────────────────────────────────
+  function box(x, by, w, h, fill, draw, r = 2) {
+    if (fill) sc(fill, 'f');
+    if (draw) sc(draw, 'd');
+    doc.roundedRect(x, by, w, h, r, r, fill && draw ? 'FD' : fill ? 'F' : 'D');
+  }
+
+  // ── Render text lines (left-aligned, reliable) ───────────────
+  function renderLines(text, x, startY, maxW, fs, style, color) {
+    doc.setFontSize(fs); doc.setFont('helvetica', style); sc(color);
+    const lines = doc.splitTextToSize(san(text), maxW);
+    lines.forEach((l, i) => doc.text(l, x, startY + i * (fs * 0.42 + 1.0)));
+    return lines.length * (fs * 0.42 + 1.0);
+  }
+
+  // ── Section header with left accent bar ──────────────────────
   function sectionHead(title, subtitle) {
-    checkPage(subtitle ? 18 : 14);
-    sc(C.primary, 'fill');
-    doc.rect(ml, y, 3, subtitle ? 12 : 8, 'F');
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
-    sc(C.text, 'text');
-    doc.text(title, ml + 6, y + 6);
+    const needed = subtitle ? 20 : 14;
+    needPage(needed);
+    sc(C.primary, 'f'); doc.rect(ML, y, 3, subtitle ? 12 : 8, 'F');
+    doc.setFontSize(10); doc.setFont('helvetica', 'bold'); sc(C.text);
+    doc.text(san(title), ML + 6, y + 6.5);
     y += 8;
     if (subtitle) {
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      sc(C.muted, 'text');
-      doc.text(subtitle, ml + 6, y);
+      doc.setFontSize(8); doc.setFont('helvetica', 'normal'); sc(C.muted);
+      doc.text(san(subtitle), ML + 6, y);
       y += 5;
     }
-    y += 3;
-  }
-
-  function divLine() {
-    checkPage(5);
-    sc(C.border, 'draw');
-    doc.setLineWidth(0.2);
-    doc.line(ml, y, W - mr, y);
     y += 4;
   }
 
-  // Sanitize text for jsPDF — replace problematic unicode chars
-  function sanitize(str) {
-    return (str || '')
-      .replace(/→/g, '->')
-      .replace(/←/g, '<-')
-      .replace(/–/g, '-')
-      .replace(/—/g, '-')
-      .replace(/"/g, '"').replace(/"/g, '"')
-      .replace(/'/g, "'").replace(/'/g, "'")
-      .replace(/\*\*/g, '').replace(/\*/g, '')
-      .replace(/[^\x00-\x7E]/g, '?'); // replace any remaining non-ASCII
+  // ── Generic card renderer ─────────────────────────────────────
+  // Pre-calculates height so box always fits content
+  function renderCard(opts) {
+    const {
+      fill, border, leftBar, barColor,
+      col1, col1fs = 9, col1bold = true,
+      col2, col2right = false, col2color,
+      col3, col3right = false,
+      body, bodyfs = 8, bodyIndent = 5,
+    } = opts;
+
+    const bodyW = CW - bodyIndent - 4;
+    const bodyH = body ? measureH(body, bodyW, bodyfs) : 0;
+    const headerH = 11;
+    const PAD = 5;
+    const cardH = headerH + bodyH + PAD;
+
+    needPage(cardH + 3);
+    box(ML, y, CW, cardH, fill, border);
+    if (leftBar) { sc(barColor || C.primary, 'f'); doc.rect(ML, y, 2.5, cardH, 'F'); }
+
+    const textX = ML + (leftBar ? 6 : bodyIndent);
+    const textY = y + 7;
+
+    // Col1 — main label
+    doc.setFontSize(col1fs);
+    doc.setFont('helvetica', col1bold ? 'bold' : 'normal');
+    sc(opts.col1color || C.text);
+    doc.text(san(col1), textX, textY);
+
+    // Col2 — right-side label (e.g. type · confidence)
+    if (col2 !== undefined) {
+      doc.setFontSize(7.5);
+      doc.setFont('helvetica', 'normal');
+      sc(col2color || C.muted);
+      if (col2right) {
+        doc.text(san(String(col2)), PW - MR - 3, textY, { align: 'right' });
+      } else {
+        doc.text(san(String(col2)), textX, textY);
+      }
+    }
+
+    // Col3 — far right label (e.g. score)
+    if (col3 !== undefined) {
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+      sc(opts.col3color || C.pass);
+      if (col3right) {
+        doc.text(san(String(col3)), PW - MR - 3, textY, { align: 'right' });
+      }
+    }
+
+    // Body text
+    if (body) {
+      const bodyY = y + headerH;
+      renderLines(body, ML + bodyIndent, bodyY, bodyW, bodyfs, 'normal', C.muted);
+    }
+
+    y += cardH + 2;
   }
 
-  // ════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════
   // HEADER
-  // ════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════
   const { passed, total } = getMandatoryCounts(result.mandatory);
   const nthOn = niceToHaveItems && niceToHaveItems.length > 0;
-  const candidateName = (result.candidate_name || 'Unknown Candidate').toUpperCase();
+  const cName = (result.candidate_name || 'Unknown').toUpperCase();
 
-  rr(ml, y, cw, 28, C.headerBg, null, 3);
+  box(ML, y, CW, 28, C.primary, null, 3);
 
-  // Left: CANDIDATE label + name
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'normal');
-  sc([180, 200, 240], 'text');
-  doc.text('CANDIDATE', ml + 5, y + 7);
-  doc.setFontSize(16);
-  doc.setFont('helvetica', 'bold');
-  sc(C.white, 'text');
-  doc.text(candidateName, ml + 5, y + 19);
+  doc.setFontSize(7); doc.setFont('helvetica', 'normal'); sc([180,200,240]);
+  doc.text('CANDIDATE', ML + 5, y + 7);
+  doc.setFontSize(15); doc.setFont('helvetica', 'bold'); sc(C.white);
+  doc.text(cName, ML + 5, y + 19);
 
-  // Right: two score columns — fixed positions, no overlap
-  // mandatory col center at W-mr-44, NtH col center at W-mr-16
-  const c1 = W - mr - 44;
-  const c2 = W - mr - 14;
+  // Two score columns — fixed positions, no overlap
+  const S1X = PW - MR - 52, S2X = PW - MR - 22;
 
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'normal');
-  sc([180, 200, 240], 'text');
-  doc.text('MANDATORY', c1, y + 7, { align: 'center' });
-  doc.setFontSize(15);
-  doc.setFont('helvetica', 'bold');
-  sc(C.white, 'text');
-  doc.text(`${passed}/${total}`, c1, y + 19, { align: 'center' });
+  doc.setFontSize(7); doc.setFont('helvetica', 'normal'); sc([180,200,240]);
+  doc.text('MANDATORY', S1X, y + 7, { align: 'center' });
+  doc.setFontSize(14); doc.setFont('helvetica', 'bold'); sc(C.white);
+  doc.text(`${passed}/${total}`, S1X, y + 19, { align: 'center' });
 
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'normal');
-  sc([180, 200, 240], 'text');
-  doc.text('NICE-TO-HAVE', c2, y + 7, { align: 'center' });
-  doc.setFontSize(nthOn ? 13 : 15);
-  doc.setFont('helvetica', 'bold');
-  sc(C.white, 'text');
-  doc.text(nthOn ? `${result.nicetohave_total}/100` : '-', c2, y + 19, { align: 'center' });
+  doc.setFontSize(7); doc.setFont('helvetica', 'normal'); sc([180,200,240]);
+  doc.text('NICE-TO-HAVE', S2X, y + 7, { align: 'center' });
+  doc.setFontSize(nthOn ? 12 : 14); doc.setFont('helvetica', 'bold'); sc(C.white);
+  doc.text(nthOn ? `${result.nicetohave_total}/100` : '-', S2X, y + 19, { align: 'center' });
 
   y += 32;
 
-  // ════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════
   // SCREENING STATUS
-  // ════════════════════════════════════════════════════════
-  checkPage(18);
+  // ══════════════════════════════════════════════════
   const sdMap = {
     'Shortlist':     { fill:[240,253,244], border:C.pass,   label:C.pass   },
     'Consider':      { fill:[255,251,235], border:C.warn,   label:C.warn   },
@@ -304,374 +294,280 @@ function generatePDF(result, parsedJD, niceToHaveItems, screeningStatus, composi
     'Not Qualified': { fill:[255,245,245], border:C.fail,   label:C.fail   },
   };
   const sd = sdMap[screeningStatus] || sdMap['Consider'];
-  const descText = {
-    'Shortlist':     nthOn
-      ? 'Strong mandatory pass rate and nice-to-have score. No critical blockers. Recommended for next stage.'
-      : 'Strong mandatory pass rate. No critical blockers. Recommended for next stage.',
+  const sdDesc = {
+    'Shortlist':     nthOn ? 'Strong mandatory pass rate and nice-to-have score. No critical blockers. Recommended for next stage.'
+                           : 'Strong mandatory pass rate. No critical blockers. Recommended for next stage.',
     'Consider':      'Meets most requirements with manageable gaps. Worth evaluating further.',
     'Review Gap':    'Has critical blocker or weak mandatory performance. Review before proceeding.',
     'Not Qualified': 'Multiple critical blockers or insufficient mandatory coverage.',
   }[screeningStatus] || '';
 
-  const descW = cw - 50;
-  const descLines = doc.splitTextToSize(sanitize(descText), descW);
-  const sH = Math.max(16, descLines.length * (8 * LH + 1.2) + 8);
-  rr(ml, y, cw, sH, sd.fill, sd.border, 2);
-
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'bold');
-  sc(C.muted, 'text');
-  doc.text('SCREENING STATUS', ml + 5, y + 5.5);
-  doc.setFontSize(11);
-  doc.setFont('helvetica', 'bold');
-  sc(sd.label, 'text');
-  doc.text(screeningStatus, ml + 5, y + 12.5);
-
-  // Description — right side, right-aligned
+  const descW = CW - 55;
   doc.setFontSize(8);
-  doc.setFont('helvetica', 'normal');
-  sc(C.muted, 'text');
-  const descStartY = y + (sH - descLines.length * (8 * LH + 1.2)) / 2 + 4;
-  descLines.forEach((line, i) => {
-    doc.text(line, W - mr - 3, descStartY + i * (8 * LH + 1.2), { align: 'right' });
-  });
+  const descLines = doc.splitTextToSize(san(sdDesc), descW);
+  const sH = Math.max(18, descLines.length * (8 * 0.42 + 1.0) + 10);
+  needPage(sH + 4);
+  box(ML, y, CW, sH, sd.fill, sd.border);
+
+  doc.setFontSize(7); doc.setFont('helvetica', 'bold'); sc(C.muted);
+  doc.text('SCREENING STATUS', ML + 5, y + 5.5);
+  doc.setFontSize(11); doc.setFont('helvetica', 'bold'); sc(sd.label);
+  doc.text(screeningStatus, ML + 5, y + 13);
+
+  const descStartY = y + (sH - descLines.length * (8 * 0.42 + 1.0)) / 2 + 4;
+  doc.setFontSize(8); doc.setFont('helvetica', 'normal'); sc(C.muted);
+  descLines.forEach((l, i) => doc.text(l, PW - MR - 3, descStartY + i * (8 * 0.42 + 1.0), { align: 'right' }));
   y += sH + 5;
 
-  // ════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════
   // STANDOUT OBSERVATION
-  // ════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════
   if (result.standout_observation) {
-    const soClean = sanitize(result.standout_observation);
-    const soLines = doc.splitTextToSize(soClean, cw - 12);
-    const soH = soLines.length * (9 * LH + 1.2) + 14;
-    checkPage(soH + 4);
-    rr(ml, y, cw, soH, [235,240,255], C.primary, 2);
-    doc.setFontSize(7);
-    doc.setFont('helvetica', 'bold');
-    sc(C.primary, 'text');
-    doc.text('STANDOUT OBSERVATION', ml + 5, y + 6);
-    let soY = y + 11;
-    soLines.forEach(line => {
-      jText(line, ml + 5, soY, cw - 12, 9, 'italic', C.text);
-      soY += 9 * LH + 1.2;
-    });
-    y = soY + 3;
+    const soText = san(result.standout_observation);
+    const soH = measureH(soText, CW - 12, 9) + 14;
+    needPage(soH + 4);
+    box(ML, y, CW, soH, [235,240,255], C.primary);
+    doc.setFontSize(7); doc.setFont('helvetica', 'bold'); sc(C.primary);
+    doc.text('STANDOUT OBSERVATION', ML + 5, y + 6);
+    renderLines(soText, ML + 5, y + 11, CW - 12, 9, 'italic', C.text);
+    y += soH + 5;
   }
 
-  // ════════════════════════════════════════════════════════
-  // RECRUITER SUMMARY
-  // ════════════════════════════════════════════════════════
-  sectionHead('RECRUITER SUMMARY');
-  const sumClean = sanitize(result.recruiter_summary || '');
-  // Split into paragraphs first, then lines within each paragraph
-  const paragraphs = sumClean.split(/\n+/).filter(p => p.trim());
-  paragraphs.forEach((para, pi) => {
-    const lines = doc.splitTextToSize(para, cw);
-    lines.forEach((line, li) => {
-      checkPage(6);
-      const isLastInPara = li === lines.length - 1;
-      if (isLastInPara) {
-        lText(line, ml, y, cw, 10, 'normal', C.text);
-      } else {
-        jText(line, ml, y, cw, 10, 'normal', C.text);
-      }
-      y += 10 * LH + 1.2;
-    });
-    if (pi < paragraphs.length - 1) y += 2; // paragraph spacing
-  });
-  y += 5;
+  // ══════════════════════════════════════════════════
+  // RECRUITER SUMMARY — inside a card for consistency
+  // ══════════════════════════════════════════════════
+  const sumText = san(result.recruiter_summary || '');
+  const sumH = measureH(sumText, CW - 10, 9.5) + 16;
+  needPage(Math.min(sumH, 40)); // don't hold entire summary on one page
+  box(ML, y, CW, sumH, C.subtle, C.border);
+  sc(C.primary, 'f'); doc.rect(ML, y, 3, sumH, 'F');
+  doc.setFontSize(9); doc.setFont('helvetica', 'bold'); sc(C.text);
+  doc.text('RECRUITER SUMMARY', ML + 7, y + 7);
+  renderLines(sumText, ML + 7, y + 12, CW - 12, 9.5, 'normal', C.text);
+  y += sumH + 5;
 
-  // ════════════════════════════════════════════════════════
-  // MANDATORY REQUIREMENTS
-  // ════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════
+  // MANDATORY
+  // ══════════════════════════════════════════════════
   sectionHead(`MANDATORY REQUIREMENTS - ${passed}/${total} PASSED`);
 
   (result.mandatory || []).forEach(item => {
-    const evClean = sanitize(item.evidence || '');
-    const evLines = doc.splitTextToSize(evClean, cw - 20);
-    const cardH = evLines.length * (8 * LH + 1.2) + 14;
-    checkPage(cardH + 3);
-    const cardFill = item.pass ? [240,253,244] : [255,245,245];
-    const cardBorder = item.pass ? C.pass : C.fail;
-    rr(ml, y, cw, cardH, cardFill, cardBorder, 2);
+    const ev = san(item.evidence || '');
+    const evH = measureH(ev, CW - 12, 8);
+    const cardH = evH + 14;
+    const fill = item.pass ? [240,253,244] : [255,245,245];
+    const border = item.pass ? C.pass : C.fail;
+    needPage(cardH + 3);
+    box(ML, y, CW, cardH, fill, border);
 
-    doc.setFontSize(7.5);
-    doc.setFont('helvetica', 'bold');
-    sc(item.pass ? C.pass : C.fail, 'text');
-    doc.text(item.pass ? 'PASS' : 'FAIL', ml + 4, y + 7);
+    // PASS/FAIL badge
+    doc.setFontSize(7.5); doc.setFont('helvetica', 'bold');
+    sc(item.pass ? C.pass : C.fail);
+    doc.text(item.pass ? 'PASS' : 'FAIL', ML + 4, y + 7);
 
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'bold');
-    sc(C.text, 'text');
-    doc.text(sanitize(item.skill), ml + 16, y + 7);
+    // Skill name — leave room for right badge
+    const skillMaxW = CW - 55;
+    doc.setFontSize(9); doc.setFont('helvetica', 'bold'); sc(C.text);
+    const skillLines = doc.splitTextToSize(san(item.skill), skillMaxW);
+    skillLines.forEach((l, i) => doc.text(l, ML + 16, y + 7 + i * 4.5));
 
-    doc.setFontSize(7.5);
-    doc.setFont('helvetica', 'normal');
-    sc(C.muted, 'text');
-    doc.text(`${item.type || ''} · ${item.confidence || ''}`, W - mr - 3, y + 7, { align: 'right' });
+    // type · confidence — right aligned on first line
+    doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); sc(C.muted);
+    doc.text(`${item.type || ''} · ${item.confidence || ''}`, PW - MR - 3, y + 7, { align: 'right' });
 
-    evLines.forEach((line, i) => {
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      sc(C.muted, 'text');
-      doc.text(line, ml + 4, y + 11 + i * (8 * LH + 1.2));
-    });
+    // Evidence
+    renderLines(ev, ML + 4, y + 12, CW - 10, 8, 'normal', C.muted);
     y += cardH + 2;
   });
-  y += 5;
+  y += 4;
 
-  // ════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════
   // NICE-TO-HAVE
-  // ════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════
   sectionHead(`NICE-TO-HAVE SCORE - ${nthOn ? `${result.nicetohave_total}/100` : 'NOT CONFIGURED'}`);
 
   if (!nthOn) {
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'italic');
-    sc(C.muted, 'text');
-    doc.text('No nice-to-have criteria were defined. Scoring was based entirely on mandatory requirements.', ml, y);
-    y += 10;
+    renderLines('No nice-to-have criteria were defined. Scoring was based entirely on mandatory requirements.', ML, y, CW, 9, 'italic', C.muted);
+    y += 12;
   } else {
-    checkPage(8);
-    sc(C.border, 'fill');
-    doc.rect(ml, y, cw, 3.5, 'F');
+    needPage(8);
+    sc(C.border, 'f'); doc.rect(ML, y, CW, 3.5, 'F');
     const barC = result.nicetohave_total >= 70 ? C.pass : result.nicetohave_total >= 40 ? C.warn : C.fail;
-    sc(barC, 'fill');
-    doc.rect(ml, y, cw * (result.nicetohave_total / 100), 3.5, 'F');
+    sc(barC, 'f'); doc.rect(ML, y, CW * (result.nicetohave_total / 100), 3.5, 'F');
     y += 7;
 
     (result.nicetohave || []).forEach(item => {
-      const evLines = doc.splitTextToSize(sanitize(item.evidence || ''), cw - 16);
-      const cardH = evLines.length * (8 * LH + 1.2) + 14;
-      checkPage(cardH + 3);
-      rr(ml, y, cw, cardH, C.subtle, C.border, 2);
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'bold');
-      sc(C.text, 'text');
-      doc.text(sanitize(item.skill), ml + 5, y + 7);
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'bold');
-      sc(item.score > 0 ? C.pass : C.muted, 'text');
-      doc.text(`+${item.score}`, W - mr - 3, y + 7, { align: 'right' });
-      doc.setFontSize(7.5);
-      doc.setFont('helvetica', 'normal');
-      sc(C.muted, 'text');
-      doc.text(`weight: ${item.weight}  ·  ${item.confidence || ''}`, W - mr - 13, y + 7, { align: 'right' });
-      evLines.forEach((line, i) => {
-        doc.setFontSize(8);
-        sc(C.muted, 'text');
-        doc.text(line, ml + 5, y + 11 + i * (8 * LH + 1.2));
-      });
+      const ev = san(item.evidence || '');
+      const evH = measureH(ev, CW - 12, 8);
+      const cardH = evH + 14;
+      needPage(cardH + 3);
+      box(ML, y, CW, cardH, C.subtle, C.border);
+
+      // Skill name — leave room for right side
+      const skillMaxW = CW - 50;
+      doc.setFontSize(9); doc.setFont('helvetica', 'bold'); sc(C.text);
+      const skillLines = doc.splitTextToSize(san(item.skill), skillMaxW);
+      skillLines.forEach((l, i) => doc.text(l, ML + 5, y + 7 + i * 4.5));
+
+      // Score — far right
+      doc.setFontSize(8.5); doc.setFont('helvetica', 'bold');
+      sc(item.score > 0 ? C.pass : C.muted);
+      doc.text(`+${item.score}`, PW - MR - 3, y + 7, { align: 'right' });
+
+      // weight · confidence — second line right
+      doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); sc(C.muted);
+      doc.text(`weight: ${item.weight}  ·  ${item.confidence || ''}`, PW - MR - 3, y + 11.5, { align: 'right' });
+
+      renderLines(ev, ML + 5, y + 13, CW - 10, 8, 'normal', C.muted);
       y += cardH + 2;
     });
   }
-  y += 5;
+  y += 4;
 
-  // ════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════
   // QUALITATIVE SIGNALS
-  // ════════════════════════════════════════════════════════
-  sectionHead('QUALITATIVE SIGNALS', '5 standard dimensions - beyond keyword matching');
+  // ══════════════════════════════════════════════════
   const rC = { STRONG: C.pass, MODERATE: C.warn, WEAK: C.fail };
 
+  sectionHead('QUALITATIVE SIGNALS', '5 standard dimensions - beyond keyword matching');
   (result.qualitative_signals || []).forEach(item => {
-    const evClean = sanitize(item.evidence || '');
-    const evLines = doc.splitTextToSize(evClean, cw - 14);
-    const cardH = evLines.length * (8 * LH + 1.2) + 14;
-    checkPage(cardH + 3);
-    rr(ml, y, cw, cardH, C.subtle, C.border, 2);
+    const ev = san(item.evidence || '');
+    const evH = measureH(ev, CW - 14, 8);
+    const cardH = evH + 14;
     const rc = rC[item.rating] || C.muted;
-    sc(rc, 'fill');
-    doc.rect(ml, y, 2.5, cardH, 'F');
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'bold');
-    sc(C.text, 'text');
-    doc.text(sanitize(item.dimension), ml + 6, y + 7);
-    doc.setFontSize(8);
-    doc.setFont('helvetica', 'bold');
-    sc(rc, 'text');
-    doc.text(item.rating, W - mr - 3, y + 7, { align: 'right' });
-    evLines.forEach((line, i) => {
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      sc(C.muted, 'text');
-      doc.text(line, ml + 6, y + 11 + i * (8 * LH + 1.2));
-    });
+    needPage(cardH + 3);
+    box(ML, y, CW, cardH, C.subtle, C.border);
+    sc(rc, 'f'); doc.rect(ML, y, 2.5, cardH, 'F');
+    doc.setFontSize(9); doc.setFont('helvetica', 'bold'); sc(C.text);
+    doc.text(san(item.dimension), ML + 6, y + 7);
+    doc.setFontSize(8); doc.setFont('helvetica', 'bold'); sc(rc);
+    doc.text(item.rating, PW - MR - 3, y + 7, { align: 'right' });
+    renderLines(ev, ML + 6, y + 12, CW - 12, 8, 'normal', C.muted);
     y += cardH + 2;
   });
-  y += 5;
+  y += 4;
 
-  // ════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════
   // ADDITIONAL REQUIREMENTS
-  // ════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════
   if (result.additional_signals?.length > 0) {
     sectionHead('ADDITIONAL REQUIREMENTS', 'Based on additional context provided');
     result.additional_signals.forEach(item => {
-      const evLines = doc.splitTextToSize(sanitize(item.evidence || ''), cw - 14);
-      const cardH = evLines.length * (8 * LH + 1.2) + 14;
-      checkPage(cardH + 3);
-      rr(ml, y, cw, cardH, [255,240,232], C.accent, 2);
-      sc(C.accent, 'fill');
-      doc.rect(ml, y, 2.5, cardH, 'F');
+      const ev = san(item.evidence || '');
+      const evH = measureH(ev, CW - 14, 8);
+      const cardH = evH + 14;
       const rc = rC[item.rating] || C.muted;
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'bold');
-      sc(C.text, 'text');
-      doc.text(sanitize(item.dimension), ml + 6, y + 7);
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'bold');
-      sc(rc, 'text');
-      doc.text(item.rating, W - mr - 3, y + 7, { align: 'right' });
-      evLines.forEach((line, i) => {
-        doc.setFontSize(8);
-        doc.setFont('helvetica', 'normal');
-        sc(C.muted, 'text');
-        doc.text(line, ml + 6, y + 11 + i * (8 * LH + 1.2));
-      });
+      needPage(cardH + 3);
+      box(ML, y, CW, cardH, [255,240,232], C.accent);
+      sc(C.accent, 'f'); doc.rect(ML, y, 2.5, cardH, 'F');
+      doc.setFontSize(9); doc.setFont('helvetica', 'bold'); sc(C.text);
+      doc.text(san(item.dimension), ML + 6, y + 7);
+      doc.setFontSize(8); doc.setFont('helvetica', 'bold'); sc(rc);
+      doc.text(item.rating, PW - MR - 3, y + 7, { align: 'right' });
+      renderLines(ev, ML + 6, y + 12, CW - 12, 8, 'normal', C.muted);
       y += cardH + 2;
     });
-    y += 5;
+    y += 4;
   }
 
-  // ════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════
   // GAP ANALYSIS
-  // ════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════
   if (result.gap_analysis?.length > 0) {
     sectionHead('GAP ANALYSIS');
     const sevMap = {
-      'BLOCKER': { fill:[255,245,245], border:C.fail,   text:C.fail   },
-      'RAMP-UP': { fill:[255,251,235], border:C.warn,   text:C.warn   },
-      'MINOR':   { fill:[240,253,244], border:C.pass,   text:C.pass   },
+      'BLOCKER': { fill:[255,245,245], border:C.fail,   text:C.fail  },
+      'RAMP-UP': { fill:[255,251,235], border:C.warn,   text:C.warn  },
+      'MINOR':   { fill:[240,253,244], border:C.pass,   text:C.pass  },
     };
     result.gap_analysis.forEach(item => {
-      const sc2 = sevMap[item.severity] || sevMap['MINOR'];
-      const noteLines = doc.splitTextToSize(sanitize(item.note || ''), cw - 20);
-      const cardH = noteLines.length * (8 * LH + 1.2) + 14;
-      checkPage(cardH + 3);
-      rr(ml, y, cw, cardH, sc2.fill, sc2.border, 2);
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'bold');
-      sc(C.text, 'text');
-      doc.text(sanitize(item.skill), ml + 5, y + 7);
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'bold');
-      sc(sc2.text, 'text');
-      doc.text(item.severity, W - mr - 3, y + 7, { align: 'right' });
-      noteLines.forEach((line, i) => {
-        doc.setFontSize(8);
-        doc.setFont('helvetica', 'normal');
-        sc(C.muted, 'text');
-        doc.text(line, ml + 5, y + 11 + i * (8 * LH + 1.2));
-      });
+      const note = san(item.note || '');
+      const noteH = measureH(note, CW - 12, 8);
+      const cardH = noteH + 14;
+      const sv = sevMap[item.severity] || sevMap['MINOR'];
+      needPage(cardH + 3);
+      box(ML, y, CW, cardH, sv.fill, sv.border);
+      doc.setFontSize(9); doc.setFont('helvetica', 'bold'); sc(C.text);
+      doc.text(san(item.skill), ML + 5, y + 7);
+      doc.setFontSize(8); doc.setFont('helvetica', 'bold'); sc(sv.text);
+      doc.text(item.severity, PW - MR - 3, y + 7, { align: 'right' });
+      renderLines(note, ML + 5, y + 12, CW - 10, 8, 'normal', C.muted);
       y += cardH + 2;
     });
-    y += 5;
+    y += 4;
   }
 
-  // ════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════
   // INTERVIEW QUESTIONS
-  // ════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════
   if (result.interview_questions?.length > 0) {
     sectionHead('SUGGESTED INTERVIEW QUESTIONS', 'Based on gaps and areas needing verification');
     result.interview_questions.forEach((q, i) => {
-      const qLines = doc.splitTextToSize(sanitize(q), cw - 16);
-      const cardH = qLines.length * (9 * LH + 1.2) + 12;
-      checkPage(cardH + 3);
-      rr(ml, y, cw, cardH, C.subtle, C.border, 2);
+      const qText = san(q);
+      const qH = measureH(qText, CW - 16, 9);
+      const cardH = qH + 12;
+      needPage(cardH + 3);
+      box(ML, y, CW, cardH, C.subtle, C.border);
 
-      // Perfectly centered number circle
-      const cx = ml + 7.5;
-      const cy = y + cardH / 2;
-      sc(C.primary, 'fill');
-      doc.circle(cx, cy, 4, 'F');
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'bold');
-      sc(C.white, 'text');
+      const cx = ML + 7.5, cy = y + cardH / 2;
+      sc(C.primary, 'f'); doc.circle(cx, cy, 4, 'F');
+      doc.setFontSize(8); doc.setFont('helvetica', 'bold'); sc(C.white);
       doc.text(String(i + 1), cx, cy + 2.8, { align: 'center' });
 
-      const textStartY = y + (cardH - qLines.length * (9 * LH + 1.2)) / 2 + 5;
-      qLines.forEach((line, j) => {
-        doc.setFontSize(9);
-        doc.setFont('helvetica', 'normal');
-        sc(C.text, 'text');
-        doc.text(line, ml + 14, textStartY + j * (9 * LH + 1.2));
-      });
+      renderLines(qText, ML + 14, y + 7, CW - 18, 9, 'normal', C.text);
       y += cardH + 2;
     });
-    y += 5;
+    y += 4;
   }
 
-  // ════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════
   // TOKEN USAGE
-  // ════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════
   if (result._usage) {
-    checkPage(18);
-    divLine();
-    rr(ml, y, cw, 16, C.subtle, C.border, 2);
-    doc.setFontSize(7);
-    doc.setFont('helvetica', 'bold');
-    sc(C.muted, 'text');
-    doc.text('TOKEN USAGE & COST', ml + 5, y + 5.5);
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'normal');
-    sc(C.text, 'text');
-    doc.text(`${result._usage.input_tokens.toLocaleString()} in  ·  ${result._usage.output_tokens.toLocaleString()} out  ·  ${result._usage.total_tokens.toLocaleString()} total tokens`, ml + 5, y + 11.5);
-    doc.setFontSize(8);
-    doc.setFont('helvetica', 'bold');
-    sc(C.primary, 'text');
-    doc.text(`Actual (Haiku): $${result._usage.cost_usd.toFixed(4)}`, W - mr - 5, y + 6.5, { align: 'right' });
-    const sonnetCost = ((result._usage.input_tokens/1e6*3)+(result._usage.output_tokens/1e6*15)).toFixed(4);
-    doc.setFontSize(7.5);
-    doc.setFont('helvetica', 'normal');
-    sc(C.muted, 'text');
-    doc.text(`Est. (Sonnet): $${sonnetCost}`, W - mr - 5, y + 12, { align: 'right' });
-    y += 20;
-
+    needPage(22);
+    sc(C.border, 'd'); doc.line(ML, y, PW - MR, y); y += 4;
+    box(ML, y, CW, 17, C.subtle, C.border);
+    doc.setFontSize(7); doc.setFont('helvetica', 'bold'); sc(C.muted);
+    doc.text('TOKEN USAGE & COST', ML + 5, y + 5.5);
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal'); sc(C.text);
+    doc.text(`${result._usage.input_tokens.toLocaleString()} in  ·  ${result._usage.output_tokens.toLocaleString()} out  ·  ${result._usage.total_tokens.toLocaleString()} total`, ML + 5, y + 12);
+    doc.setFontSize(8); doc.setFont('helvetica', 'bold'); sc(C.primary);
+    doc.text(`Actual (Haiku): $${result._usage.cost_usd.toFixed(4)}`, PW - MR - 5, y + 6, { align: 'right' });
+    const sc2 = ((result._usage.input_tokens/1e6*3)+(result._usage.output_tokens/1e6*15)).toFixed(4);
+    doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); sc(C.muted);
+    doc.text(`Est. (Sonnet): $${sc2}`, PW - MR - 5, y + 12, { align: 'right' });
+    y += 21;
     const { passed: fp, total: ft } = getMandatoryCounts(result.mandatory);
-    const nthLabel = nthOn ? 'NtH x 40/100' : 'NtH not configured';
-    doc.setFontSize(7.5);
-    sc(C.muted, 'text');
-    doc.text(`Score: mandatory (${fp}/${ft}) x ${nthOn ? 60 : 100} + ${nthLabel} - blockers x 50 = ${Math.round(compositeScore)} pts`, ml, y);
+    doc.setFontSize(7.5); sc(C.muted);
+    doc.text(`Score: mandatory(${fp}/${ft}) x ${nthOn?60:100} + ${nthOn?'NtH x 40/100':'NtH not configured'} - blockers x 50 = ${Math.round(compositeScore)} pts`, ML, y);
     y += 5;
   }
 
-  // ════════════════════════════════════════════════════════
-  // HEADER + FOOTER on every page (no watermark)
-  // ════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════
+  // HEADER + FOOTER on every page
+  // ══════════════════════════════════════════════════
   const pageCount = doc.getNumberOfPages();
   const dateStr = new Date().toISOString().slice(0,10);
-
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
-
-    // Header line
-    sc(C.primary, 'draw');
-    doc.setLineWidth(0.4);
-    doc.line(ml, 14, W - mr, 14);
-    doc.setFontSize(8);
-    doc.setFont('helvetica', 'bold');
-    sc(C.primary, 'text');
-    doc.text('CV Screening Assistant', ml, 11);
-    doc.setFontSize(7.5);
-    doc.setFont('helvetica', 'normal');
-    sc(C.muted, 'text');
-    doc.text('by M Irfan Avianto  ·  Astro Personal AI Challenge', ml + 44, 11);
-    doc.text(`${dateStr}  ·  ${candidateName}`, W - mr, 11, { align: 'right' });
-
-    // Footer line
-    sc(C.border, 'draw');
-    doc.setLineWidth(0.2);
-    doc.line(ml, H - 12, W - mr, H - 12);
-    doc.setFontSize(7);
-    doc.setFont('helvetica', 'normal');
-    sc(C.muted, 'text');
-    doc.text('AI outputs are recommendations, not final decisions.  ·  CONFIDENTIAL  ·  For internal use only.', ml, H - 8);
-    doc.text(`${i} / ${pageCount}`, W - mr, H - 8, { align: 'right' });
+    sc(C.primary, 'd'); doc.setLineWidth(0.4);
+    doc.line(ML, 14, PW - MR, 14);
+    doc.setFontSize(8); doc.setFont('helvetica', 'bold'); sc(C.primary);
+    doc.text('CV Screening Assistant', ML, 11);
+    doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); sc(C.muted);
+    doc.text('by M Irfan Avianto  ·  Astro Personal AI Challenge', ML + 46, 11);
+    doc.text(`${dateStr}  ·  ${cName}`, PW - MR, 11, { align: 'right' });
+    sc(C.border, 'd'); doc.setLineWidth(0.2);
+    doc.line(ML, PH - 12, PW - MR, PH - 12);
+    doc.setFontSize(7); doc.setFont('helvetica', 'normal'); sc(C.muted);
+    doc.text('AI outputs are recommendations, not final decisions.  ·  CONFIDENTIAL  ·  For internal use only.', ML, PH - 8);
+    doc.text(`${i} / ${pageCount}`, PW - MR, PH - 8, { align: 'right' });
   }
 
-  // Save — filename uses UPPERCASE candidate name
-  const nameStr = candidateName.replace(/\s+/g, '-');
+  const nameStr = cName.replace(/\s+/g, '-');
   doc.save(`${dateStr}_${nameStr}_CV-Analysis.pdf`);
 }
+
 
 // ─── localStorage helpers ─────────────────────────────────────────
 const LS_KEY = 'astro_cv_screening_records';
