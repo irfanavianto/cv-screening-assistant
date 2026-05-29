@@ -180,18 +180,20 @@ function generatePDF(result, parsedJD, niceToHaveItems, screeningStatus, composi
 
   // ── Section header with left accent bar ──────────────────────
   function sectionHead(title, subtitle) {
-    const needed = subtitle ? 20 : 14;
+    const needed = subtitle ? 22 : 14;
     needPage(needed);
-    sc(C.primary, 'f'); doc.rect(ML, y, 3, subtitle ? 12 : 8, 'F');
+    const barH = subtitle ? 13 : 8;
+    sc(C.primary, 'f'); doc.rect(ML, y, 3, barH, 'F');
     doc.setFontSize(10); doc.setFont('helvetica', 'bold'); sc(C.text);
     doc.text(san(title), ML + 6, y + 6.5);
-    y += 8;
     if (subtitle) {
       doc.setFontSize(8); doc.setFont('helvetica', 'normal'); sc(C.muted);
-      doc.text(san(subtitle), ML + 6, y);
-      y += 5;
+      doc.text(san(subtitle), ML + 6, y + 12);
+      y += 19;
+    } else {
+      y += 10;
     }
-    y += 4;
+    y += 3;
   }
 
   // ── Generic card renderer ─────────────────────────────────────
@@ -352,31 +354,29 @@ function generatePDF(result, parsedJD, niceToHaveItems, screeningStatus, composi
   sectionHead(`MANDATORY REQUIREMENTS - ${passed}/${total} PASSED`);
 
   (result.mandatory || []).forEach(item => {
+    const skillMaxW = CW - 58;
+    doc.setFontSize(9);
+    const skillLines = doc.splitTextToSize(san(item.skill), skillMaxW);
+    const skillH = skillLines.length * 4.8;
     const ev = san(item.evidence || '');
-    const evH = measureH(ev, CW - 12, 8);
-    const cardH = evH + 14;
+    const evH = measureH(ev, CW - 10, 8);
+    const cardH = skillH + evH + 10;
     const fill = item.pass ? [240,253,244] : [255,245,245];
     const border = item.pass ? C.pass : C.fail;
     needPage(cardH + 3);
     box(ML, y, CW, cardH, fill, border);
 
-    // PASS/FAIL badge
     doc.setFontSize(7.5); doc.setFont('helvetica', 'bold');
     sc(item.pass ? C.pass : C.fail);
-    doc.text(item.pass ? 'PASS' : 'FAIL', ML + 4, y + 7);
+    doc.text(item.pass ? 'PASS' : 'FAIL', ML + 4, y + 6.5);
 
-    // Skill name — leave room for right badge
-    const skillMaxW = CW - 55;
     doc.setFontSize(9); doc.setFont('helvetica', 'bold'); sc(C.text);
-    const skillLines = doc.splitTextToSize(san(item.skill), skillMaxW);
-    skillLines.forEach((l, i) => doc.text(l, ML + 16, y + 7 + i * 4.5));
+    skillLines.forEach((l, i) => doc.text(l, ML + 16, y + 6.5 + i * 4.8));
 
-    // type · confidence — right aligned on first line
     doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); sc(C.muted);
-    doc.text(`${item.type || ''} · ${item.confidence || ''}`, PW - MR - 3, y + 7, { align: 'right' });
+    doc.text(`${item.type || ''} · ${item.confidence || ''}`, PW - MR - 3, y + 6.5, { align: 'right' });
 
-    // Evidence
-    renderLines(ev, ML + 4, y + 12, CW - 10, 8, 'normal', C.muted);
+    renderLines(ev, ML + 4, y + skillH + 8, CW - 10, 8, 'normal', C.muted);
     y += cardH + 2;
   });
   y += 4;
@@ -397,28 +397,27 @@ function generatePDF(result, parsedJD, niceToHaveItems, screeningStatus, composi
     y += 7;
 
     (result.nicetohave || []).forEach(item => {
+      const skillMaxW = CW - 52;
+      doc.setFontSize(9);
+      const skillLines = doc.splitTextToSize(san(item.skill), skillMaxW);
+      const skillH = skillLines.length * 4.8;
       const ev = san(item.evidence || '');
-      const evH = measureH(ev, CW - 12, 8);
-      const cardH = evH + 14;
+      const evH = measureH(ev, CW - 10, 8);
+      const cardH = skillH + evH + 14;
       needPage(cardH + 3);
       box(ML, y, CW, cardH, C.subtle, C.border);
 
-      // Skill name — leave room for right side
-      const skillMaxW = CW - 50;
       doc.setFontSize(9); doc.setFont('helvetica', 'bold'); sc(C.text);
-      const skillLines = doc.splitTextToSize(san(item.skill), skillMaxW);
-      skillLines.forEach((l, i) => doc.text(l, ML + 5, y + 7 + i * 4.5));
+      skillLines.forEach((l, i) => doc.text(l, ML + 5, y + 6.5 + i * 4.8));
 
-      // Score — far right
       doc.setFontSize(8.5); doc.setFont('helvetica', 'bold');
       sc(item.score > 0 ? C.pass : C.muted);
-      doc.text(`+${item.score}`, PW - MR - 3, y + 7, { align: 'right' });
+      doc.text(`+${item.score}`, PW - MR - 3, y + 6.5, { align: 'right' });
 
-      // weight · confidence — second line right
       doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); sc(C.muted);
-      doc.text(`weight: ${item.weight}  ·  ${item.confidence || ''}`, PW - MR - 3, y + 11.5, { align: 'right' });
+      doc.text(`weight: ${item.weight}  ·  ${item.confidence || ''}`, PW - MR - 3, y + 6.5 + 4.8, { align: 'right' });
 
-      renderLines(ev, ML + 5, y + 13, CW - 10, 8, 'normal', C.muted);
+      renderLines(ev, ML + 5, y + skillH + 10, CW - 10, 8, 'normal', C.muted);
       y += cardH + 2;
     });
   }
@@ -509,12 +508,22 @@ function generatePDF(result, parsedJD, niceToHaveItems, screeningStatus, composi
       needPage(cardH + 3);
       box(ML, y, CW, cardH, C.subtle, C.border);
 
+      // const cx = ML + 7.5, cy = y + cardH / 2;
+      // sc(C.primary, 'f'); doc.circle(cx, cy, 4, 'F');
+      // doc.setFontSize(8); doc.setFont('helvetica', 'bold'); sc(C.white);
+      // doc.text(String(i + 1), cx, cy + 2.8, { align: 'center' });
+
+      // renderLines(qText, ML + 14, y + 7, CW - 18, 9, 'normal', C.text);
       const cx = ML + 7.5, cy = y + cardH / 2;
       sc(C.primary, 'f'); doc.circle(cx, cy, 4, 'F');
       doc.setFontSize(8); doc.setFont('helvetica', 'bold'); sc(C.white);
       doc.text(String(i + 1), cx, cy + 2.8, { align: 'center' });
 
-      renderLines(qText, ML + 14, y + 7, CW - 18, 9, 'normal', C.text);
+      // Text vertically centered with circle
+      const qLineCount = doc.splitTextToSize(qText, CW - 18).length;
+      const totalTextH = qLineCount * (9 * 0.42 + 1.0);
+      const textStartY = cy - totalTextH / 2 + 3;
+      renderLines(qText, ML + 14, textStartY, CW - 18, 9, 'normal', C.text);
       y += cardH + 2;
     });
     y += 4;
