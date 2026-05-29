@@ -748,12 +748,12 @@ function NiceToHaveCard({ item }) {
         </div>
         <div className="flex items-center gap-3">
           <ConfidenceBadge level={item.confidence} />
-          <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+          {/* <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
             weight: <strong style={{ color: 'var(--text)' }}>{item.weight}</strong>
           </span>
           <span style={{ fontWeight: 700, color: item.score > 0 ? 'var(--pass)' : 'var(--text-faint)' }}>
             +{item.score}
-          </span>
+          </span> */}
         </div>
       </div>
       <div className="progress-bar">
